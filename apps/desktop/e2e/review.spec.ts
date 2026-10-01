@@ -137,7 +137,8 @@ test("Settings sections navigate by keyboard and advanced Jev policy saves and r
   await expect(claude).not.toBeChecked();
 
   await codex.uncheck();
-  await expect(dialog.getByText(/If neither is selected, Auto stays on the thread’s current backend/)).toBeVisible();
+  await expect(dialog.getByText(/With an empty allowed-backend list, Auto stays on the thread’s current backend/)).toBeVisible();
+  await expect(tid(dialog, "allow-mock-routing")).not.toBeChecked();
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await trigger.click();
@@ -159,10 +160,20 @@ test("editing coding backends preserves a legacy Mock routing entry", async () =
   await tid(page, "open-settings").click();
   const dialog = tid(page, "settings");
   await dialog.getByRole("button", { name: "Advanced / demo" }).click();
+  const mock = tid(dialog, "allow-mock-routing");
+  await expect(mock).toBeChecked();
+  await expect(dialog.getByText(/Existing Mock allowlist entries stay enabled until you turn this off/)).toBeVisible();
   await dialog.getByRole("checkbox", { name: "Claude" }).uncheck();
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
   const saved = JSON.parse(fs.readFileSync(file, "utf8"));
   expect(saved.settings.routing.allow_backends).toEqual(["codex", "mock"]);
+  await expect(dialog).toHaveCount(0);
+
+  await tid(page, "open-settings").click();
+  await dialog.getByRole("button", { name: "Advanced / demo" }).click();
+  await tid(dialog, "allow-mock-routing").uncheck();
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  expect(JSON.parse(fs.readFileSync(file, "utf8")).settings.routing.allow_backends).toEqual(["codex"]);
   await expect(dialog).toHaveCount(0);
 });
 
