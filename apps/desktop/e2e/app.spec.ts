@@ -235,7 +235,8 @@ test("⚡ Auto: the judge picks a model before the turn and leaves an expandable
   await expect(tid(route, "route-meta")).toContainText("quick answer · heuristic");
   await expect(tid(route, "item-body")).toHaveCount(0);
   await tid(route, "item-toggle").click();
-  await expect(tid(route, "item-body")).toContainText("No TypeSafe API key found; used the built-in heuristic.");
+  await expect(tid(route, "item-body")).toContainText("No TypeSafe API key found");
+  await expect(tid(route, "item-body")).toContainText("used the built-in heuristic");
   await expect(tid(route, "item-body")).toContainText("quick answer · complexity");
   await page.screenshot({ path: path.join(appDir, "test-results", "e2e-auto-route.png") });
   // The receipt sits between the user message and the agent's first reply.

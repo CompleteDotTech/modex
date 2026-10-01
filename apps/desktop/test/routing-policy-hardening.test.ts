@@ -42,6 +42,23 @@ test("backend switching requires no live session even when Jev says context is i
   assert.ok(withSession.reasons.some((reason) => /keep its session/.test(reason)));
 });
 
+test("advanced allowed-backend restrictions govern switching; an empty allowlist stays on the current CLI", () => {
+  const ladders = {
+    codex: [candidate("codex", "small-codex", ["low"], 0)],
+    claude: [candidate("claude", "large-claude", ["low", "high"], 3)],
+  };
+  const current = { backend: "codex" as const, model: "small-codex", effort: "low", hasSession: false };
+  const request = { current, ladders, judgments: judgments({ complexity: 2.8 }) };
+  const allowed = decide(input(request, { allow_backend_switch: true, allow_backends: ["claude"] }));
+  assert.equal(allowed.backend, "claude");
+
+  const excluded = decide(input(request, { allow_backend_switch: true, allow_backends: ["codex"] }));
+  assert.equal(excluded.backend, "codex");
+
+  const noneSelected = decide(input(request, { allow_backend_switch: true, allow_backends: [] }));
+  assert.equal(noneSelected.backend, "codex");
+});
+
 test("the effort ceiling bounds the selected supported level instead of rounding above it", () => {
   const sparse = [candidate("codex", "sparse", ["low", "xhigh"], 2)];
   const selected = decide(input({
