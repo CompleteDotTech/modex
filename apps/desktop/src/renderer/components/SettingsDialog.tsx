@@ -191,6 +191,10 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
     const legacyDemo = r.allow_backends.includes("mock") ? ["mock" as const] : [];
     setR("allow_backends", [...coding, ...legacyDemo]);
   };
+  const toggleLegacyMock = (enabled: boolean) => {
+    const allow = r.allow_backends.filter((backend) => backend !== "mock");
+    setR("allow_backends", enabled ? [...allow, "mock"] : allow);
+  };
 
   const sections = [
     ["general", "General"], ["clis", "Coding CLIs"], ["routing", "Auto routing"], ["advanced", "Advanced / demo"],
@@ -199,14 +203,14 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
   return (
     <div className="modal-backdrop" onClick={() => { if (!saving) onClose(); }}>
       <div ref={dialogRef} tabIndex={-1} className="modal settings-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Settings" data-testid="settings">
-        <header className="settings-header">
+        <header className="settings-header" data-testid="settings-header">
           <div>
             <h2>Settings</h2>
             <p>Modex runs the Claude Code and Codex CLIs for coding. Jev classifies requests for Auto routing; it never sees project files or runs coding turns.</p>
           </div>
         </header>
         <nav className="settings-nav" aria-label="Settings sections" data-testid="settings-nav">
-          {sections.map(([id, label]) => <button key={id} type="button" className={`settings-nav-item${section === id ? " active" : ""}`} aria-current={section === id ? "page" : undefined} onClick={() => chooseSection(id)}>{label}</button>)}
+          {sections.map(([id, label]) => <button key={id} type="button" className={`settings-nav-item${section === id ? " active" : ""}`} aria-current={section === id ? "page" : undefined} onFocus={(event) => event.currentTarget.scrollIntoView({ block: "nearest", inline: "nearest" })} onClick={() => chooseSection(id)}>{label}</button>)}
         </nav>
         <div className="settings-scroll" ref={contentRef} data-testid="settings-content">
         {section === "general" && <section id="settings-general" aria-labelledby="settings-general-title" className="settings-section">
@@ -291,7 +295,7 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
         </p>}
         {test && test !== "running" && <p className={`routing-test ${test.ok ? "ok" : "warn"}`} data-testid="routing-test">{test.ok ? "✓ " : "✗ "}{test.message}{test.tested ? ` · tested ${testIdentity(test.tested)}` : ""}{test.status ? ` (HTTP ${test.status})` : ""} · {test.ms} ms</p>}
         {test === "running" && <p className="routing-test">Asking Jev…</p>}
-        {test && test !== "running" && !test.current && <p className="warn">Settings changed while this test ran; its result does not verify the current configuration.</p>}
+        {test && test !== "running" && !test.current && <p className="warn" data-testid="routing-test-stale">Settings changed while this test ran; its result does not verify the current configuration.</p>}
         <div className="grid2">
           <label className="field">
             <span>Judge transport</span>
@@ -360,11 +364,23 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
               <input type="checkbox" checked={r.allow_backends.includes(backend)} onChange={(e) => toggleBackend(backend, e.target.checked)} />
               <span>{backend === "codex" ? "Codex" : "Claude"}</span>
             </label>)}
-            <small>If neither is selected, Auto stays on the thread’s current backend and cannot switch CLIs. This list does not enable switching by itself; the Auto routing switch must also be on.</small>
+            <small>{r.allow_backends.some((backend) => backend === "codex" || backend === "claude")
+              ? "Auto may switch among the selected coding backends when the thread has no CLI session to preserve. This list does not enable switching by itself; the Auto routing switch must also be on."
+              : r.allow_backends.includes("mock")
+                ? "No coding CLI is selected. Mock remains an allowed destination for offline routing when the current backend has no suitable model. Switching must also be enabled above."
+                : "With an empty allowed-backend list, Auto stays on the thread’s current backend. Switching must also be enabled above."}</small>
           </fieldset>
           <p className="hint settings-effect">Saved routing settings apply to the next Auto decision, including in existing threads. They do not change a thread’s current backend, model, or CLI session.</p>
           <div className="settings-divider" />
           <h3 className="section-title">Offline demo</h3>
+          <fieldset className="settings-backends settings-demo-backend">
+            <legend>Routing compatibility</legend>
+            <label className="check">
+              <input data-testid="allow-mock-routing" type="checkbox" checked={r.allow_backends.includes("mock")} onChange={(e) => toggleLegacyMock(e.target.checked)} />
+              <span>Allow Mock for offline demo routing</span>
+            </label>
+            <small>Mock is the offline scripted backend, not a coding CLI. Existing Mock allowlist entries stay enabled until you turn this off.</small>
+          </fieldset>
           <label className="field">
             <span>Mock script</span>
             <input value={s.mock_script ?? ""} onChange={(e) => set("mock_script", e.target.value)} placeholder="/path/to/mock-script.json" spellCheck={false} />
