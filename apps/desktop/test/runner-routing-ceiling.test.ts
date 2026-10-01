@@ -65,3 +65,39 @@ test("Auto routing exceptions cannot run a live backend with an unchecked effort
     await runner.dispose();
   }
 });
+
+test("a blocked router decision cannot switch backends or discard a saved CLI session", async () => {
+  const home = tmpdir("modex-policy-blocked-switch-");
+  const store = new Store(home);
+  const project = store.addProject(gitRepo());
+  let runs = 0;
+  const backend: Backend = {
+    id: "codex", listModels: async () => [], dispose: async () => {},
+    runTurn: async () => { runs++; return { status: "completed" }; },
+  };
+  const router = {
+    route: async () => ({
+      item: {
+        id: "blocked-route", kind: "route", backend: "claude", model: "opus", effort: "high", fast: false,
+        source: "heuristic", task: "feature", confidence: 0.9, complexity: 2,
+        pinned: false, reasons: ["Blocked fixture."], durationMs: 0,
+      },
+      decision: {
+        backend: "claude", model: "opus", effort: "high", fast: false, tier: 3,
+        pinned: false, blocked: true, reasons: ["Cannot honor the effort ceiling."],
+      },
+    }),
+  } as unknown as Router;
+  const runner = new ThreadRunner({ home, store, emit: () => {}, router, backends: { codex: backend } });
+  try {
+    const thread = await runner.createThread(project.id, { backend: "codex", auto: true });
+    store.updateThread(thread.id, { sessionHandle: "codex-session-1" });
+    await runner.send(thread.id, "continue the existing work");
+    assert.equal(runs, 0);
+    assert.equal(store.thread(thread.id)?.backend, "codex");
+    assert.equal(store.thread(thread.id)?.sessionHandle, "codex-session-1");
+    assert.equal(runner.status(thread.id), "error");
+  } finally {
+    await runner.dispose();
+  }
+});
