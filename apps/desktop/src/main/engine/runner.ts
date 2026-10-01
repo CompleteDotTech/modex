@@ -268,7 +268,11 @@ export class ThreadRunner {
         fast = d.fast;
         thread = this.o.store.thread(threadId) ?? thread;
       } catch (err) {
-        this.addItem(threadId, { id: newId(), kind: "notice", level: "warn", text: `Auto routing failed (${(err as Error).message}); using the thread's current model.`, at: new Date().toISOString() });
+        if (thread.backend === "mock") {
+          this.addItem(threadId, { id: newId(), kind: "notice", level: "warn", text: `Auto routing failed (${(err as Error).message}); using the thread's current model.`, at: new Date().toISOString() });
+        } else {
+          routingBlocked = `Auto could not establish a safe route (${(err as Error).message}). Retry routing or explicitly turn Auto off to use the current model.`;
+        }
       }
     }
     if (abort.signal.aborted) {
