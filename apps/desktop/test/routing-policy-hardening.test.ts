@@ -1,0 +1,97 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { decide, type DecisionInput } from "../src/main/engine/routing/policy.js";
+import type { Candidate } from "../src/main/engine/routing/catalog.js";
+import { DEFAULT_ROUTING, type RoutingPolicy } from "../src/shared/types.js";
+import type { Judgments } from "../src/main/engine/routing/judge.js";
+
+const judgments = (over: Partial<Judgments> = {}): Judgments => ({
+  task: "feature", taskConfidence: 0.9, taskProbabilities: {}, complexity: 2.5,
+  complexityConfidence: 0.8, blastRadius: 0.2, wantsSpeed: 0, needsDeepReasoning: 0.2,
+  dependsOnPriorTurns: 0, ...over,
+});
+const candidate = (backend: Candidate["backend"], model: string, efforts: string[], tier: Candidate["tier"] = 2): Candidate => ({
+  backend, model, label: model, tier, efforts,
+});
+const input = (over: Partial<DecisionInput> = {}, policy: Partial<RoutingPolicy> = {}): DecisionInput => ({
+  judgments: judgments(), source: "jev", policy: { ...DEFAULT_ROUTING, ...policy },
+  current: { backend: "codex", model: "current", effort: "high", hasSession: false },
+  ladders: {
+    codex: [candidate("codex", "current", ["low", "medium", "high", "xhigh"], 2)],
+    claude: [candidate("claude", "opus", ["low", "medium", "high", "xhigh"], 2)],
+  }, fitOffset: 0, premiumExhausted: false, ...over,
+});
+
+test("backend switching requires no live session even when Jev says context is independent", () => {
+  const ladders = {
+    codex: [candidate("codex", "current", ["low", "medium", "high", "xhigh"], 0)],
+    claude: [candidate("claude", "opus", ["low", "medium", "high", "xhigh"], 3)],
+  };
+  const policy = { allow_backend_switch: true };
+  const noSession = decide(input({
+    current: { backend: "codex", model: "current", effort: "low", hasSession: false }, ladders,
+    judgments: judgments({ complexity: 2.8, dependsOnPriorTurns: 0.1 }),
+  }, policy));
+  assert.equal(noSession.backend, "claude");
+
+  const withSession = decide(input({
+    current: { backend: "codex", model: "current", effort: "low", hasSession: true }, ladders,
+    judgments: judgments({ complexity: 2.8, dependsOnPriorTurns: 0 }),
+  }, policy));
+  assert.equal(withSession.backend, "codex");
+  assert.ok(withSession.reasons.some((reason) => /keep its session/.test(reason)));
+});
+
+test("the effort ceiling bounds the selected supported level instead of rounding above it", () => {
+  const sparse = [candidate("codex", "sparse", ["low", "xhigh"], 2)];
+  const selected = decide(input({
+    current: { backend: "codex", model: "sparse", effort: "low", hasSession: false },
+    ladders: { codex: sparse }, judgments: judgments({ complexity: 2.2, needsDeepReasoning: 0.2 }),
+  }, { max_effort: "high" }));
+  assert.equal(selected.effort, "low");
+  assert.equal(selected.blocked, undefined);
+
+  const noFit = decide(input({
+    current: { backend: "codex", model: "high-only", effort: "low", hasSession: false },
+    ladders: { codex: [candidate("codex", "high-only", ["high"], 2)] },
+  }, { max_effort: "low" }));
+  assert.equal(noFit.blocked, true);
+  assert.equal(noFit.effort, undefined);
+  assert.ok(noFit.reasons.some((reason) => /No supported reasoning effort/.test(reason)));
+});
+
+test("low-confidence pinned routes are capped or blocked, including unknown model capabilities", () => {
+  const pinned = decide(input({
+    current: { backend: "codex", model: "current", effort: "xhigh", hasSession: false },
+    judgments: judgments({ taskConfidence: 0.2 }),
+  }, { max_effort: "low" }));
+  assert.equal(pinned.pinned, true);
+  assert.equal(pinned.effort, "low");
+
+  const unknown = decide(input({
+    current: { backend: "codex", model: "default-model", hasSession: false },
+    ladders: { codex: [candidate("codex", "default-model", [], 2)] },
+    judgments: judgments({ taskConfidence: 0.2 }),
+  }, { max_effort: "low" }));
+  assert.equal(unknown.blocked, true);
+  assert.equal(unknown.effort, undefined);
+  assert.ok(unknown.reasons.some((reason) => /Cannot honor/.test(reason)));
+});
+
+test("missing model lists and premium budget cannot bypass the configured ceiling", () => {
+  const missing = decide(input({
+    current: { backend: "codex", model: "default-model", effort: "xhigh", hasSession: false },
+    ladders: {}, judgments: judgments({ taskConfidence: 0.2 }),
+  }, { max_effort: "low" }));
+  assert.equal(missing.blocked, true);
+  assert.equal(missing.effort, undefined);
+
+  const premium = decide(input({
+    current: { backend: "codex", model: "premium-only", effort: "low", hasSession: false },
+    ladders: { codex: [candidate("codex", "premium-only", ["xhigh"], 2)] },
+    premiumExhausted: true,
+  }, { max_effort: "max" }));
+  assert.equal(premium.blocked, true);
+  assert.equal(premium.effort, undefined);
+  assert.ok(premium.reasons.some((reason) => /premium-turn budget/.test(reason)));
+});
