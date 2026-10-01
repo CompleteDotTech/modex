@@ -34,6 +34,7 @@ interface Setup {
   kind: "cli" | "http" | "none";
   key: ResolvedKey;
   cli: CliInfo | null;
+  unavailableReason?: string;
 }
 
 export interface RouteInput {
@@ -56,6 +57,8 @@ export class Router {
   readonly fit: Fit;
   readonly secrets: SecretStore;
   private setupPromise: Promise<Setup> | null = null;
+  /** Invalidates session-level results from setup/provider work started with old settings. */
+  private setupGeneration = 0;
   private readonly ladders = new Map<BackendId, { at: number; rungs: Candidate[]; error?: string }>();
   /** Set after an auth or billing rejection: retrying every turn would only add latency. */
   private jevDisabled: string | null = null;
@@ -67,12 +70,13 @@ export class Router {
 
   /** Forget the resolved key/transport and any session-level rejection (after a key or policy change). */
   reset(): void {
+    this.setupGeneration++;
     this.setupPromise = null;
     this.jevDisabled = null;
   }
 
   private setup(): Promise<Setup> {
-    if (this.o.transport === null) return Promise.resolve({ transport: null, kind: "none", key: { key: null, source: "none" }, cli: null });
+    if (this.o.transport === null) return Promise.resolve({ transport: null, kind: "none", key: { key: null, source: "none" }, cli: null, unavailableReason: "No TypeSafe API key found and no jev CLI on PATH." });
     if (this.o.transport) return Promise.resolve({ transport: this.o.transport, kind: "http", key: { key: "injected", source: "env" }, cli: null });
     return (this.setupPromise ??= this.buildSetup());
   }
@@ -85,10 +89,14 @@ export class Router {
       resolveTypesafeKey({ env, stored: () => this.secrets.get("typesafe_api_key"), ...this.o.keyResolver }),
       policy.jev_transport === "http" ? Promise.resolve(null) : (this.o.detectCli ?? ((bin: string) => detectJevCli(bin, env)))(policy.jev_bin || "jev"),
     ]);
-    // The CLI is preferred when present: one config file, one doctor, one retry policy for every tool on this machine.
-    if (cli && policy.jev_transport !== "http") return { transport: cliTransport(cli.bin, { apiKey: key.key, env, timeoutMs, spawnImpl: this.o.spawnImpl }), kind: "cli", key, cli };
+    // CLI-only must honor the explicit preference; only Auto mode may fall back to HTTPS.
+    if (policy.jev_transport !== "http" && cli) return { transport: cliTransport(cli.bin, { apiKey: key.key, env, timeoutMs, spawnImpl: this.o.spawnImpl }), kind: "cli", key, cli };
+    if (policy.jev_transport === "cli") {
+      const bin = policy.jev_bin || "jev";
+      return { transport: null, kind: "none", key, cli, unavailableReason: `Jev CLI-only transport is selected, but “${bin}” was not found or could not be run. Install or repair the Jev CLI, or choose Auto or HTTPS transport.` };
+    }
     if (key.key) return { transport: httpTransport(key.key, { timeoutMs }), kind: "http", key, cli };
-    return { transport: null, kind: "none", key, cli };
+    return { transport: null, kind: "none", key, cli, unavailableReason: key.problem ?? "No TypeSafe API key found — Modex keychain, TYPESAFE_API_KEY, ~/.config/jev/config.json, and your login shell are all empty." };
   }
 
   /**
@@ -129,12 +137,13 @@ export class Router {
   /** One tiny request through the active transport: proves key, credits, and connectivity without spending a real turn. */
   async test(): Promise<RoutingTest> {
     const started = Date.now();
+    const generation = this.setupGeneration;
     const s = await this.setup();
-    if (!s.transport) return { ok: false, message: s.key.problem ?? "No TypeSafe API key found and no jev CLI on PATH.", transport: "none", ms: Date.now() - started };
+    if (!s.transport) return { ok: false, message: s.unavailableReason ?? s.key.problem ?? "Jev is unavailable with the current transport settings.", transport: "none", ms: Date.now() - started };
     try {
       const res = await s.transport({ model: this.o.policy().jev_model || DEFAULT_JEV_MODEL, state: "ping", questions: { reachable: { type: "noul", instructions: "This state is the single word 'ping'." } } });
       const a = res.answers.reachable;
-      this.jevDisabled = null;
+      if (generation === this.setupGeneration) this.jevDisabled = null;
       return { ok: true, message: `Jev answered via ${s.kind === "cli" ? `the jev CLI ${s.cli?.version ?? ""}`.trim() : "HTTPS"} (${res.usage?.input_tokens ?? "?"} input tokens${a && a.type === "noul" ? `, p=${a.noul.toFixed(2)}` : ""}).`, transport: s.kind, ms: Date.now() - started };
     } catch (err) {
       const e = err instanceof JevError ? err : new JevError((err as Error).message, "unknown");
@@ -161,7 +170,7 @@ export class Router {
 
   async status(): Promise<RoutingStatus> {
     const s = await this.setup();
-    const detail = this.jevDisabled ?? s.key.problem ?? (s.transport ? undefined : "No TypeSafe API key found — Modex keychain, TYPESAFE_API_KEY, ~/.config/jev/config.json, and your login shell are all empty.");
+    const detail = this.jevDisabled ?? s.unavailableReason ?? s.key.problem;
     const fit = this.fit.snapshot();
     const tasks: RoutingStatus["fit"]["tasks"] = {};
     for (const [k, v] of Object.entries(fit.tasks)) if (v) tasks[k] = { offset: Math.round(v.offset * 100) / 100, samples: v.samples, overridesUp: v.overridesUp, overridesDown: v.overridesDown, failures: v.failures };
@@ -182,6 +191,7 @@ export class Router {
 
   async route(input: RouteInput, signal?: AbortSignal): Promise<RouteReceipt> {
     const started = Date.now();
+    const generation = this.setupGeneration;
     const policy = this.o.policy();
     const { thread } = input;
     const state = stateFor({ text: input.text, backend: thread.backend, model: thread.model, mode: thread.mode, plan: thread.plan, items: input.items, project: input.project });
@@ -189,7 +199,8 @@ export class Router {
     let judgments: Judgments;
     let source: JudgeSource = "heuristic";
     let fallback: string | undefined;
-    const { transport } = await this.setup();
+    const setup = await this.setup();
+    const { transport } = setup;
     if (this.jevDisabled) {
       fallback = `${this.jevDisabled} Used the built-in heuristic.`;
       judgments = judgeHeuristically(state);
@@ -199,12 +210,12 @@ export class Router {
         source = "jev";
       } catch (err) {
         const why = err instanceof JevError ? `${err.message} (${err.code})` : (err as Error).message;
-        if (err instanceof JevError && (err.code === "auth" || err.code === "billing")) this.jevDisabled = `Jev is off for this session — ${err.message} Fix the key or credits and restart Modex.`;
+        if (generation === this.setupGeneration && err instanceof JevError && (err.code === "auth" || err.code === "billing")) this.jevDisabled = `Jev is off for this session — ${err.message} Fix the key or credits and restart Modex.`;
         fallback = `Jev unavailable — ${why}; used the built-in heuristic.`;
         judgments = judgeHeuristically(state);
       }
     } else {
-      fallback = "No TypeSafe API key found; used the built-in heuristic.";
+      fallback = `${setup.unavailableReason ?? setup.key.problem ?? "No Jev transport available"}; used the built-in heuristic.`;
       judgments = judgeHeuristically(state);
     }
 
@@ -252,6 +263,7 @@ export class Router {
   async followUp(input: RouteInput, signal?: AbortSignal): Promise<FollowUp | null> {
     if (signal?.aborted) return null;
     const state = followUpState(input);
+    const generation = this.setupGeneration;
     if (!state) return null;
     const fallback: FollowUp = { text: FOLLOW_UPS[fallbackFollowUp(state)], source: "heuristic" };
     if (!input.thread.auto) return fallback;
@@ -268,7 +280,7 @@ export class Router {
         }
       }
     } catch (err) {
-      if (err instanceof JevError && (err.code === "auth" || err.code === "billing")) this.jevDisabled = `Jev is off for this session — ${err.message} Fix the key or credits and restart Modex.`;
+      if (generation === this.setupGeneration && err instanceof JevError && (err.code === "auth" || err.code === "billing")) this.jevDisabled = `Jev is off for this session — ${err.message} Fix the key or credits and restart Modex.`;
     }
     return signal?.aborted ? null : fallback;
   }
