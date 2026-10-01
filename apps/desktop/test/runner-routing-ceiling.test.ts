@@ -36,6 +36,7 @@ test("Auto stops before backend execution when no advertised effort fits the cei
     await runner.send(thread.id, "review the repository");
     assert.equal(runs, 0, "the existing backend model was run after the policy rejected its effort capability");
     assert.equal(runner.status(thread.id), "error");
+    assert.equal(router.fit.snapshot().history.length, 0, "a blocked turn must not teach the fit or consume a route budget");
     assert.ok(runner.items(thread.id).some((item) => item.kind === "route" && item.reasons.some((reason) => /route was stopped/.test(reason))));
     assert.ok(runner.items(thread.id).some((item) => item.kind === "notice" && item.level === "error" && /Auto routing stopped/.test(item.text)));
   } finally {
