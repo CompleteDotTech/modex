@@ -43,3 +43,25 @@ test("Auto stops before backend execution when no advertised effort fits the cei
     await runner.dispose();
   }
 });
+
+test("Auto routing exceptions cannot run a live backend with an unchecked effort", async () => {
+  const home = tmpdir("modex-policy-error-");
+  const store = new Store(home);
+  const project = store.addProject(gitRepo());
+  let runs = 0;
+  const backend: Backend = {
+    id: "codex", listModels: async () => [], dispose: async () => {},
+    runTurn: async () => { runs++; return { status: "completed" }; },
+  };
+  const router = new Router({ home, policy: () => ({ ...DEFAULT_ROUTING, max_effort: "low" }), transport: null, listModels: async () => { throw new Error("model discovery unavailable"); } });
+  const runner = new ThreadRunner({ home, store, emit: () => {}, router, backends: { codex: backend } });
+  try {
+    const thread = await runner.createThread(project.id, { backend: "codex", auto: true });
+    await runner.send(thread.id, "review the repository");
+    assert.equal(runs, 0);
+    assert.equal(runner.status(thread.id), "error");
+    assert.ok(runner.items(thread.id).some((item) => item.kind === "notice" && item.level === "error" && /model discovery unavailable/.test(item.text)));
+  } finally {
+    await runner.dispose();
+  }
+});
