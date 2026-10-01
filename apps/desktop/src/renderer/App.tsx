@@ -270,10 +270,14 @@ export function App() {
   });
   const openPath = (p: string) => act(() => bridge.invoke("shell:openPath", { path: p }));
   const openTerminal = (p: string) => act(() => bridge.invoke("shell:openTerminal", { path: p }));
-  const saveSettings = (patch: Partial<Settings>) => act(async () => {
+  const saveSettings = async (patch: Partial<Settings>): Promise<void> => {
     await bridge.invoke("settings:update", patch);
-    await refresh();
-  });
+    try {
+      await refresh();
+    } catch (err) {
+      setError(`Settings were saved, but Modex could not refresh its view: ${(err as Error).message}`);
+    }
+  };
 
   // Keyboard shortcuts: ⌘N new thread, ⇧⌘N worktree thread, ⌘⏎ send (handled in Composer), ⇧⌘P plan, ⌘. stop, ⌘J changes,
   // ⌃` terminal. Inside the terminal, xterm consumes the ⌃-keys it sends to the shell, so they never get here.

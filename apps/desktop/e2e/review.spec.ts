@@ -94,6 +94,54 @@ test("Settings owns focus, traps Tab, blocks app shortcuts, and restores focus o
   await expect(trigger).toBeFocused();
 });
 
+test("Jev test health identifies the tested setup, stays explicit, and HTTP-only does not claim the CLI is missing", async () => {
+  await tid(page, "open-settings").click();
+  const dialog = tid(page, "settings");
+  await expect(dialog.locator(".field").filter({ hasText: "jev executable" }).locator("small")).toContainText("not used or checked in HTTP-only mode");
+  const status = await page.evaluate(() => window.modex!.invoke("routing:status", undefined));
+  await app.evaluate(({ ipcMain }, current) => {
+    ipcMain.removeHandler("routing:test");
+    ipcMain.handle("routing:test", async () => ({ ok: true, message: "fake Jev answered", transport: "http", ms: 4, tested: { transport: "http", executable: null, model: current.model }, current: true }));
+    ipcMain.removeHandler("routing:status");
+    ipcMain.handle("routing:status", async () => ({ ...current, lastTest: { ok: true, message: "fake Jev answered", transport: "http", ms: 4, tested: { transport: "http", executable: null, model: current.model }, current: true, at: Date.now() } }));
+  }, status);
+  await dialog.getByRole("button", { name: "Test judge" }).click();
+  await expect(tid(page, "routing-test")).toContainText("tested HTTPS");
+  await expect(tid(page, "routing-verification")).toContainText("Verified · HTTPS");
+  const transport = dialog.locator(".field").filter({ hasText: "Judge transport" }).locator("select");
+  await transport.selectOption("auto");
+  await expect(tid(page, "routing-test-draft")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Test judge" })).toBeDisabled();
+  await expect(tid(page, "routing-verification")).toHaveText("Configured · untested");
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+});
+
+test("settings save stays pending through dismissal attempts and preserves drafts for retry", async () => {
+  await app.evaluate(({ ipcMain }) => {
+    let attempts = 0;
+    ipcMain.removeHandler("settings:update");
+    ipcMain.handle("settings:update", async () => {
+      attempts++;
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      if (attempts === 1) throw new Error("fake persistence failure");
+    });
+  });
+  await tid(page, "open-settings").click();
+  const dialog = tid(page, "settings");
+  const mode = dialog.locator(".field").filter({ hasText: "Default mode" }).locator("select");
+  await mode.selectOption("plan");
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "Saving…" })).toBeDisabled();
+  await page.locator(".modal-backdrop").click({ position: { x: 1, y: 1 } });
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeVisible();
+  await expect(tid(page, "settings-save-error")).toContainText("fake persistence failure");
+  await expect(mode).toHaveValue("plan");
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+});
+
 test("streaming does not reparse completed Markdown", async () => {
   await app.evaluate(({ BrowserWindow }) => {
     const win = BrowserWindow.getAllWindows()[0]!;
