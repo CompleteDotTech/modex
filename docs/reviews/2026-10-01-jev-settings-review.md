@@ -28,8 +28,12 @@ the reviewer must inspect the behavior and its integration before recording a di
 ## Review and validation
 
 Final reviewer disposition and exact-head validation evidence will be recorded after
-integration. Implementation used separate Luna/high worktrees. The requested fast service
-tier was unavailable in the delegation interface; no model substitution was made.
+integration. The first preparatory delegations inherited the default model because their
+full-history forks ignored overrides. Their changes were retained as starting code; all
+four finishing implementation lanes were then delegated with fresh contexts and verified
+from session records to use `gpt-6-luna` with `high` reasoning. The final independent
+review must likewise be verified as `gpt-6-sol` with `xhigh` reasoning. The requested fast
+service tier was unavailable in the delegation interface and was reported to the user.
 
 Baseline platform limitations were reproduced before integration: the Windows suite assumes
 POSIX modes, path separators and login shells in several existing tests. The Linux GCC
