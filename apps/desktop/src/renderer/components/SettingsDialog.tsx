@@ -30,7 +30,7 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     const dialog = dialogRef.current!;
-    const controls = () => Array.from(dialog.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]')).filter((el) => el.getClientRects().length > 0);
+    const controls = () => Array.from(dialog.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]')).filter((el) => el.getClientRects().length > 0 && !el.closest("[inert]"));
     (controls()[0] ?? dialog).focus();
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -41,7 +41,8 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
         const list = controls();
         const first = list[0] ?? dialog;
         const last = list.at(-1) ?? dialog;
-        if (!dialog.contains(document.activeElement) || (event.shiftKey ? document.activeElement === first : document.activeElement === last)) {
+        const active = document.activeElement as HTMLElement;
+        if (!list.includes(active) || (event.shiftKey ? active === first : active === last)) {
           event.preventDefault();
           (event.shiftKey ? last : first).focus();
         }
@@ -202,7 +203,7 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
 
   return (
     <div className="modal-backdrop" onClick={() => { if (!saving) onClose(); }}>
-      <div ref={dialogRef} tabIndex={-1} className="modal settings-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Settings" data-testid="settings">
+      <div ref={dialogRef} tabIndex={-1} className="modal settings-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-busy={interactionLocked} aria-label="Settings" data-testid="settings">
         <header className="settings-header" data-testid="settings-header">
           <div>
             <h2>Settings</h2>
@@ -210,9 +211,9 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
           </div>
         </header>
         <nav className="settings-nav" aria-label="Settings sections" data-testid="settings-nav">
-          {sections.map(([id, label]) => <button key={id} type="button" className={`settings-nav-item${section === id ? " active" : ""}`} aria-current={section === id ? "page" : undefined} onFocus={(event) => event.currentTarget.scrollIntoView({ block: "nearest", inline: "nearest" })} onClick={() => chooseSection(id)}>{label}</button>)}
+          {sections.map(([id, label]) => <button key={id} type="button" disabled={interactionLocked} className={`settings-nav-item${section === id ? " active" : ""}`} aria-current={section === id ? "page" : undefined} onFocus={(event) => event.currentTarget.scrollIntoView({ block: "nearest", inline: "nearest" })} onClick={() => chooseSection(id)}>{label}</button>)}
         </nav>
-        <div className="settings-scroll" ref={contentRef} data-testid="settings-content">
+        <div className="settings-scroll" ref={contentRef} data-testid="settings-content" inert={interactionLocked}>
         {section === "general" && <section id="settings-general" aria-labelledby="settings-general-title" className="settings-section">
           <h3 id="settings-general-title">General</h3>
           <label className="field">
@@ -270,8 +271,9 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
           {routing ? ` ${routing.fit.routes} auto turn${routing.fit.routes === 1 ? "" : "s"} so far` : ""}
           {routing && r.premium_turns_per_day != null ? ` · ${routing.fit.premiumToday}/${r.premium_turns_per_day} premium today` : ""}
           {learned.length ? ` · learned: ${learned.map(([k, t]) => `${k.replace(/_/g, " ")} ${t.offset > 0 ? "+" : ""}${t.offset}`).join(", ")}` : ""}
-          {routing && routing.fit.routes > 0 ? <> · <button className="btn small ghost" onClick={() => { if (window.confirm("Reset Auto routing's learned preferences? This applies immediately and cannot be undone.")) void bridge.invoke("routing:reset", undefined).then(setRouting); }}>Reset learning…</button></> : null}
+          {routing && routing.fit.routes > 0 ? <> · <button className="btn small ghost" disabled={interactionLocked} onClick={() => void resetLearning()}>Reset learning…</button></> : null}
         </p>
+        {resetError && <p className="warn" role="alert" data-testid="routing-reset-error">{resetError}</p>}
         <div className="key-row" data-testid="jev-key">
           <label className="field grow">
             <span>TypeSafe API key {routing?.secrets.present ? <em className="ok">· saved in {routing.secrets.backend}{routing.keySource === "modex" && routing.keyLast4 ? ` (****${routing.keyLast4})` : ""}</em> : null}</span>
@@ -284,9 +286,9 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
             {keyError && <small className="warn">{keyError}</small>}
           </label>
           <div className="key-actions">
-            <button className="btn small primary" disabled={keyBusy || !keyDraft.trim()} onClick={() => void keyAction(() => bridge.invoke("routing:setKey", { key: keyDraft }))}>Save key now</button>
-            <button className="btn small" disabled={keyBusy || !routing?.secrets.present} onClick={() => void keyAction(() => bridge.invoke("routing:clearKey", undefined))}>Clear now</button>
-            <button className="btn small" disabled={keyBusy || test === "running" || judgeDraftDirty} onClick={() => void runTest()} title={judgeDraftDirty ? "Save or revert the transport and executable draft before testing" : "Sends one tiny question through the currently saved transport"}>Test judge</button>
+            <button className="btn small primary" disabled={interactionLocked || !keyDraft.trim()} onClick={() => void keyAction(() => bridge.invoke("routing:setKey", { key: keyDraft }))}>Save key now</button>
+            <button className="btn small" disabled={interactionLocked || !routing?.secrets.present} onClick={() => void keyAction(() => bridge.invoke("routing:clearKey", undefined))}>Clear now</button>
+            <button className="btn small" disabled={interactionLocked || judgeDraftDirty} onClick={() => void runTest()} title={judgeDraftDirty ? "Save or revert the transport and executable draft before testing" : "Sends one tiny question through the currently saved transport"}>Test judge</button>
           </div>
         </div>
         {judgeDraftDirty && <p className="hint" data-testid="routing-test-draft">Transport, executable, or model draft differs from saved settings. Save or revert it before testing; the test never saves settings.</p>}
@@ -295,7 +297,7 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
         </p>}
         {test && test !== "running" && <p className={`routing-test ${test.ok ? "ok" : "warn"}`} data-testid="routing-test">{test.ok ? "✓ " : "✗ "}{test.message}{test.tested ? ` · tested ${testIdentity(test.tested)}` : ""}{test.status ? ` (HTTP ${test.status})` : ""} · {test.ms} ms</p>}
         {test === "running" && <p className="routing-test">Asking Jev…</p>}
-        {test && test !== "running" && !test.current && <p className="warn" data-testid="routing-test-stale">Settings changed while this test ran; its result does not verify the current configuration.</p>}
+        {test && test !== "running" && !testResultCurrent && <p className="warn" data-testid="routing-test-stale">Settings changed while this test ran; its result does not verify the current configuration.</p>}
         <div className="grid2">
           <label className="field">
             <span>Judge transport</span>
@@ -392,7 +394,7 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
           {saveError && <p className="warn" role="alert" data-testid="settings-save-error">Could not save settings: {saveError} Your draft is still here; retry or cancel.</p>}
           <div className="row end">
             <button className="btn" disabled={saving} onClick={onClose}>Cancel</button>
-            <button className="btn primary" disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : "Save"}</button>
+            <button className="btn primary" disabled={interactionLocked} onClick={() => void save()}>{saving ? "Saving…" : "Save"}</button>
           </div>
         </footer>
       </div>
