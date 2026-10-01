@@ -429,4 +429,83 @@ test("router: prefers the jev CLI when found, stores a hand-entered key in the k
   rejecting.reset();
   assert.equal((await rejecting.status()).live, true);
 });
+
+test("router: enforces CLI-only, prefers CLI in Auto, and skips CLI for HTTPS", async () => {
+  const home = tmpdir("modex-transport-policy-");
+  const base = { home, listModels, env: { MODEX_NO_LOGIN_PATH: "1" }, keyResolver: { jevConfigPath: path.join(home, "no-config.json"), loginShell: async () => null } };
+  const keyEnv = { TYPESAFE_API_KEY: "sk-fake-offline-key", MODEX_NO_LOGIN_PATH: "1" };
+  let cliChecks: string[] = [];
+  const detectCli = async (bin: string) => { cliChecks.push(bin); return null; };
+
+  // An explicit CLI choice never switches to HTTPS, even when a key exists.
+  let policy: RoutingPolicy = { ...DEFAULT_ROUTING, jev_transport: "cli", jev_bin: "/custom/jev" };
+  let router = new Router({ ...base, policy: () => policy, env: keyEnv, detectCli });
+  let status = await router.status();
+  assert.deepEqual(status.transport, { kind: "none" });
+  assert.match(status.detail!, /CLI-only transport is selected/);
+  assert.match(status.detail!, /\/custom\/jev/);
+  assert.equal((await router.test()).transport, "none");
+  const noCliRoute = await router.route({ thread: thread(), text: "rename a to b", items: [], project: { name: "demo" } });
+  assert.equal(noCliRoute.source, "heuristic");
+  assert.match(noCliRoute.item.reasons[0]!, /built-in heuristic/);
+  assert.deepEqual(cliChecks, ["/custom/jev"]);
+  const noKeyNoCli = new Router({ ...base, policy: () => policy, detectCli: async () => null });
+  assert.match((await noKeyNoCli.status()).detail!, /CLI-only transport is selected/);
+
+  // Auto keeps preferring the CLI, but falls back to HTTPS only when the key is available.
+  policy = { ...DEFAULT_ROUTING, jev_transport: "auto" };
+  cliChecks = [];
+  router = new Router({ ...base, policy: () => policy, env: keyEnv, detectCli: async (bin) => { cliChecks.push(bin); return { bin: "/usr/bin/jev", version: "1.0" }; } });
+  status = await router.status();
+  assert.deepEqual(status.transport, { kind: "cli", bin: "/usr/bin/jev", version: "1.0" });
+  assert.deepEqual(cliChecks, ["jev"]);
+
+  cliChecks = [];
+  router = new Router({ ...base, policy: () => ({ ...DEFAULT_ROUTING, jev_transport: "auto" }), env: keyEnv, detectCli });
+  status = await router.status();
+  assert.deepEqual(status.transport, { kind: "http" });
+  assert.deepEqual(cliChecks, ["jev"]);
+
+  // HTTPS skips CLI detection and is unavailable without a resolved key.
+  cliChecks = [];
+  router = new Router({ ...base, policy: () => ({ ...DEFAULT_ROUTING, jev_transport: "http" }), env: keyEnv, detectCli });
+  status = await router.status();
+  assert.deepEqual(status.transport, { kind: "http" });
+  assert.deepEqual(cliChecks, []);
+  router = new Router({ ...base, policy: () => ({ ...DEFAULT_ROUTING, jev_transport: "http" }), detectCli });
+  status = await router.status();
+  assert.deepEqual(status.transport, { kind: "none" });
+  assert.match(status.detail!, /No TypeSafe API key found/);
+  assert.deepEqual(cliChecks, []);
+});
+
+test("router: reset switches transport and executable without letting an old setup replace the new one", async () => {
+  const home = tmpdir("modex-transport-reset-");
+  let policy: RoutingPolicy = { ...DEFAULT_ROUTING, jev_transport: "cli", jev_bin: "jev-old" };
+  let resolveOld!: (value: { bin: string; version: string } | null) => void;
+  const router = new Router({
+    home,
+    policy: () => policy,
+    listModels,
+    env: { TYPESAFE_API_KEY: "sk-fake-offline-key", MODEX_NO_LOGIN_PATH: "1" },
+    keyResolver: { jevConfigPath: path.join(home, "no-config.json"), loginShell: async () => null },
+    detectCli: (bin) => bin === "jev-old" ? new Promise((resolve) => { resolveOld = resolve; }) : Promise.resolve({ bin: bin === "jev-new" ? "/custom/jev-new" : bin, version: bin === "jev-new" ? "2.0" : "3.0" }),
+  });
+  const oldStatus = router.status();
+  policy = { ...DEFAULT_ROUTING, jev_transport: "cli", jev_bin: "jev-new" };
+  router.reset();
+  const fresh = await router.status();
+  assert.deepEqual(fresh.transport, { kind: "cli", bin: "/custom/jev-new", version: "2.0" });
+  resolveOld({ bin: "/custom/jev-old", version: "1.0" });
+  assert.deepEqual((await oldStatus).transport, { kind: "cli", bin: "/custom/jev-old", version: "1.0" });
+  assert.deepEqual((await router.status()).transport, { kind: "cli", bin: "/custom/jev-new", version: "2.0" });
+
+  // A settings save can switch CLI → HTTP and replace the executable without restarting Modex.
+  policy = { ...DEFAULT_ROUTING, jev_transport: "http" };
+  router.reset();
+  assert.deepEqual((await router.status()).transport, { kind: "http" });
+  policy = { ...DEFAULT_ROUTING, jev_transport: "cli", jev_bin: "/another/jev" };
+  router.reset();
+  assert.deepEqual((await router.status()).transport, { kind: "cli", bin: "/another/jev", version: "3.0" });
+});
 type SpawnLikeT = import("../src/main/engine/routing/jev.js").SpawnLike;

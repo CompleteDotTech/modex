@@ -129,7 +129,11 @@ handle("changes:revert", async ({ threadId, path: rel }) => {
   await gitx.revert(cwd, rel);
   return gitx.status(cwd);
 });
-handle("settings:update", (patch) => store.updateSettings(patch));
+handle("settings:update", (patch) => {
+  const settings = store.updateSettings(patch);
+  if (patch.routing) runner.router.reset();
+  return settings;
+});
 handle("models:list", ({ backend }) => runner.listModels(backend));
 handle("routing:status", () => runner.router.status());
 handle("routing:reset", () => {
