@@ -29,7 +29,7 @@ export interface Decision {
   tier: Tier;
   /** True when the judge was too unsure and the thread's own model was kept. */
   pinned: boolean;
-  /** The request must not run because the configured effort ceiling cannot be guaranteed. */
+  /** The request must not run because an effort or premium budget limit cannot be guaranteed. */
   blocked?: true;
   reasons: string[];
 }
@@ -91,6 +91,7 @@ export function decide(input: DecisionInput): Decision {
   // 1. Confidence gate: a calibrated judge that is unsure keeps whatever the user last chose.
   if (input.source === "jev" && j.taskConfidence < policy.min_confidence) {
     reasons.push(`Jev was unsure what kind of task this is (${j.taskConfidence.toFixed(2)} < ${policy.min_confidence}); kept ${label(currentCandidate)}.`);
+    if (input.premiumExhausted && currentCandidate?.tier === 3) return blocked(input, reasons, "The daily premium-turn budget is spent and the pinned model is top tier; the route was stopped.");
     const effort = pinnedEffort(input, currentCandidate, reasons);
     if (effort === undefined) return blocked(input, reasons, `Cannot honor the ${policy.max_effort} reasoning-effort ceiling for the current model; the route was stopped.`);
     if (effort && effort !== current.effort) reasons.push(`Current effort is above or unsupported under the ${policy.max_effort} ceiling; lowered to ${effort}.`);
@@ -130,11 +131,13 @@ export function decide(input: DecisionInput): Decision {
   const candidate = pick(rungs, target);
   if (!candidate) {
     reasons.push("No model list available; kept the current model.");
+    if (input.premiumExhausted && currentCandidate?.tier === 3) return blocked(input, reasons, "The daily premium-turn budget is spent and the current model is top tier; the route was stopped.");
     const effort = pinnedEffort(input, currentCandidate, reasons);
     if (effort === undefined) return blocked(input, reasons, `Cannot honor the ${policy.max_effort} reasoning-effort ceiling because the current model's effort capabilities are unavailable; the route was stopped.`);
     if (effort && effort !== current.effort) reasons.push(`Current effort is above or unsupported under the ${policy.max_effort} ceiling; lowered to ${effort}.`);
     return { backend: current.backend, model: current.model, effort: effort ?? undefined, fast: false, tier: target, pinned: true, reasons };
   }
+  if (input.premiumExhausted && candidate.tier === 3) return blocked(input, reasons, `The daily premium-turn budget is spent and ${candidate.label} is top tier; the route was stopped.`);
   if (candidate.tier < target) reasons.push(`No tier-${target} model on ${backend}; using the highest available (${candidate.label}).`);
 
   // 5. Effort: tier sets the base; deep reasoning bumps, a speed signal drops, policy caps.

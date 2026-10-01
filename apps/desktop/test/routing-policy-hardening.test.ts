@@ -144,7 +144,7 @@ test("low-confidence pinned routes are capped or blocked, including unknown mode
 test("pinned routes also apply the premium effort ceiling", () => {
   const pinned = decide(input({
     current: { backend: "codex", model: "premium", effort: "xhigh", hasSession: false },
-    ladders: { codex: [candidate("codex", "premium", ["high", "xhigh", "max"], 3)] },
+    ladders: { codex: [candidate("codex", "premium", ["high", "xhigh", "max"], 2)] },
     judgments: judgments({ taskConfidence: 0.1 }), premiumExhausted: true,
   }, { max_effort: "max" }));
   assert.equal(pinned.effort, "high");
@@ -167,4 +167,22 @@ test("missing model lists and premium budget cannot bypass the configured ceilin
   assert.equal(premium.blocked, true);
   assert.equal(premium.effort, undefined);
   assert.ok(premium.reasons.some((reason) => /premium-turn budget/.test(reason)));
+});
+
+test("a spent premium budget blocks top-tier models even when effort is below high", () => {
+  const onlyTopTier = [candidate("codex", "top-only", ["low", "high"], 3)];
+  const ordinary = decide(input({
+    current: { backend: "codex", model: "top-only", effort: "low", hasSession: false },
+    ladders: { codex: onlyTopTier }, premiumExhausted: true,
+  }));
+  assert.equal(ordinary.blocked, true, "the lowest available model is still top tier");
+  assert.match(ordinary.reasons.at(-1)!, /premium-turn budget/);
+
+  const pinned = decide(input({
+    current: { backend: "codex", model: "top-only", effort: "low", hasSession: true },
+    ladders: { codex: onlyTopTier }, premiumExhausted: true,
+    judgments: judgments({ taskConfidence: 0.1 }),
+  }));
+  assert.equal(pinned.blocked, true, "low judge confidence cannot waive the spent budget");
+  assert.match(pinned.reasons.at(-1)!, /premium-turn budget/);
 });

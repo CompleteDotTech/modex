@@ -101,3 +101,80 @@ test("a test locks settings while running and marks its result stale after a rel
   await expect(tid(page, "routing-test-stale")).toContainText("Settings changed while this test ran");
   await dialog.getByRole("button", { name: "Cancel" }).click();
 });
+
+test("a delayed opening status cannot overwrite a completed immediate key action", async () => {
+  const before = await page.evaluate(() => window.modex!.invoke("routing:status", undefined));
+  await app.evaluate(({ ipcMain }, initial) => {
+    let releaseOldStatus: (() => void) | undefined;
+    ipcMain.removeHandler("routing:status");
+    ipcMain.handle("routing:status", () => new Promise((resolve) => {
+      releaseOldStatus = () => resolve(initial);
+    }));
+    ipcMain.removeHandler("routing:setKey");
+    ipcMain.handle("routing:setKey", async () => ({
+      ...initial, live: true, keyLast4: "7890", keySource: "modex",
+      transport: { kind: "http" }, secrets: { ...initial.secrets, available: true, present: true },
+    }));
+    (globalThis as any).__modexReleaseOldRoutingStatus = () => releaseOldStatus?.();
+  }, before);
+
+  await tid(page, "open-settings").click();
+  const dialog = tid(page, "settings");
+  await tid(dialog, "jev-key").locator('input[type="password"]').fill("fake-offline-key-7890");
+  await dialog.getByRole("button", { name: "Save key now" }).click();
+  await expect(tid(dialog, "routing-status")).toContainText("key ****7890");
+  await app.evaluate(() => (globalThis as any).__modexReleaseOldRoutingStatus());
+  await expect(tid(dialog, "routing-status")).toContainText("key ****7890");
+  await expect(tid(dialog, "jev-key")).toContainText("saved in");
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+});
+
+test("test stays pending through status refresh and cannot be dismissed mid-operation", async () => {
+  const before = await page.evaluate(() => window.modex!.invoke("routing:status", undefined));
+  await app.evaluate(({ ipcMain }, initial) => {
+    let statusCalls = 0;
+    let releaseRefresh: (() => void) | undefined;
+    ipcMain.removeHandler("routing:status");
+    ipcMain.handle("routing:status", () => {
+      if (++statusCalls === 1) return initial;
+      return new Promise((resolve) => { releaseRefresh = () => resolve(initial); });
+    });
+    ipcMain.removeHandler("routing:test");
+    ipcMain.handle("routing:test", async () => ({ ok: true, message: "fake judge response", transport: "none", ms: 1 }));
+    (globalThis as any).__modexReleaseRoutingRefresh = () => releaseRefresh?.();
+  }, before);
+
+  await tid(page, "open-settings").click();
+  const dialog = tid(page, "settings");
+  await dialog.getByRole("button", { name: "Test judge" }).click();
+  await expect(dialog.getByText("Asking Jev…")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Cancel" })).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeVisible();
+  await page.locator(".modal-backdrop").click({ position: { x: 2, y: 2 } });
+  await expect(dialog).toBeVisible();
+  await app.evaluate(() => (globalThis as any).__modexReleaseRoutingRefresh());
+  await expect(tid(dialog, "routing-test")).toContainText("fake judge response");
+  await expect(dialog.getByRole("button", { name: "Cancel" })).toBeEnabled();
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+});
+
+test("a saved setting remains visible on reopen when the full-state refresh fails", async () => {
+  await tid(page, "open-settings").click();
+  const dialog = tid(page, "settings");
+  await dialog.getByRole("button", { name: "General" }).click();
+  await dialog.getByRole("combobox", { name: "Default mode for new threads" }).selectOption("chat");
+  await app.evaluate(({ ipcMain }) => {
+    ipcMain.removeHandler("state:get");
+    ipcMain.handle("state:get", async () => { throw new Error("fake refresh failure after save"); });
+  });
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole("alert")).toContainText("Settings were saved, but Modex could not refresh its view");
+
+  await tid(page, "open-settings").click();
+  const reopened = tid(page, "settings");
+  await reopened.getByRole("button", { name: "General" }).click();
+  await expect(reopened.getByRole("combobox", { name: "Default mode for new threads" })).toHaveValue("chat");
+  await reopened.getByRole("button", { name: "Cancel" }).click();
+});

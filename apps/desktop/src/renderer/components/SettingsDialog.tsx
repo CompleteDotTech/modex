@@ -69,12 +69,16 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
   const [modelError, setModelError] = useState<string | null>(null);
   const operationRef = useRef(false);
   const savingRef = useRef(false);
+  const routingStatusRequestRef = useRef(0);
 
   dismissRef.current = () => { if (!dismissBlockedRef.current) closeRef.current(); };
 
   useEffect(() => {
     void bridge.invoke("backends:health", undefined).then(setHealth).catch(() => setHealth(null));
-    void bridge.invoke("routing:status", undefined).then(setRouting).catch(() => setRouting(null));
+    const request = ++routingStatusRequestRef.current;
+    void bridge.invoke("routing:status", undefined)
+      .then((status) => { if (request === routingStatusRequestRef.current) setRouting(status); })
+      .catch(() => { if (request === routingStatusRequestRef.current) setRouting(null); });
     for (const b of ["codex", "claude"] as BackendId[]) void bridge.invoke("models:list", { backend: b }).then((r) => setLists((l) => ({ ...l, [b]: r }))).catch((err) => setLists((l) => ({ ...l, [b]: { models: [], error: (err as Error).message } })));
   }, []);
 
@@ -107,6 +111,7 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
   const keyAction = async (fn: () => Promise<RoutingStatus>) => {
     if (operationRef.current) return;
     operationRef.current = true;
+    ++routingStatusRequestRef.current;
     setKeyBusy(true);
     setKeyError(null);
     setTest(null);
@@ -123,6 +128,7 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
   const resetLearning = async () => {
     if (operationRef.current || !window.confirm("Reset Auto routing's learned preferences? This applies immediately and cannot be undone.")) return;
     operationRef.current = true;
+    ++routingStatusRequestRef.current;
     setResetBusy(true);
     setResetError(null);
     setTest(null);
@@ -138,11 +144,15 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
   const runTest = async () => {
     if (operationRef.current) return;
     operationRef.current = true;
+    const request = ++routingStatusRequestRef.current;
     setTest("running");
     try {
       const result = await bridge.invoke("routing:test", undefined);
+      try {
+        const status = await bridge.invoke("routing:status", undefined);
+        if (request === routingStatusRequestRef.current) setRouting(status);
+      } catch { /* The explicit test result is still useful if a status refresh fails. */ }
       setTest(result);
-      try { setRouting(await bridge.invoke("routing:status", undefined)); } catch { /* The explicit test result is still useful if a status refresh fails. */ }
     } catch (err) {
       setTest({ ok: false, message: (err as Error).message, transport: "none", ms: 0 });
     } finally {
@@ -178,7 +188,7 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
       operationRef.current = false;
     }
   };
-  dismissBlockedRef.current = saving;
+  dismissBlockedRef.current = interactionLocked;
 
   const chooseSection = (next: typeof section) => {
     setSection(next);
@@ -202,7 +212,7 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
   ] as const;
 
   return (
-    <div className="modal-backdrop" onClick={() => { if (!saving) onClose(); }}>
+    <div className="modal-backdrop" onClick={() => { if (!interactionLocked) onClose(); }}>
       <div ref={dialogRef} tabIndex={-1} className="modal settings-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-busy={interactionLocked} aria-label="Settings" data-testid="settings">
         <header className="settings-header" data-testid="settings-header">
           <div>
@@ -393,7 +403,7 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
         <footer className="settings-footer" data-testid="settings-actions">
           {saveError && <p className="warn" role="alert" data-testid="settings-save-error">Could not save settings: {saveError} Your draft is still here; retry or cancel.</p>}
           <div className="row end">
-            <button className="btn" disabled={saving} onClick={onClose}>Cancel</button>
+            <button className="btn" disabled={interactionLocked} onClick={onClose}>Cancel</button>
             <button className="btn primary" disabled={interactionLocked} onClick={() => void save()}>{saving ? "Saving…" : "Save"}</button>
           </div>
         </footer>
