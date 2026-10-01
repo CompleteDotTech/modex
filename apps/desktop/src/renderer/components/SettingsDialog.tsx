@@ -60,10 +60,14 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
   const [keyDraft, setKeyDraft] = useState("");
   const [keyBusy, setKeyBusy] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
   const [test, setTest] = useState<RoutingTest | "running" | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [modelError, setModelError] = useState<string | null>(null);
+  const operationRef = useRef(false);
+  const savingRef = useRef(false);
 
   dismissRef.current = () => { if (!dismissBlockedRef.current) closeRef.current(); };
 
@@ -93,9 +97,15 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
   const savedTestMatches = !!lastTest?.tested && sameJudgeDraft(r, settings.routing) &&
     lastTest.tested.transport === routing?.transport.kind && lastTest.tested.model === routing?.model &&
     (r.jev_transport === "http" || lastTest.tested.executable === (routing?.transport.kind === "cli" ? routing.transport.bin : r.jev_bin || "jev"));
+  const testResultCurrent = !!test && test !== "running" && test.current !== false && !!test.tested && !judgeDraftDirty && !!routing &&
+    test.tested.transport === routing.transport.kind && test.tested.model === routing.model &&
+    (r.jev_transport === "http" || test.tested.executable === (routing.transport.kind === "cli" ? routing.transport.bin : r.jev_bin || "jev"));
+  const interactionLocked = saving || keyBusy || resetBusy || test === "running";
   const learned = routing ? Object.entries(routing.fit.tasks).filter(([, t]) => t.offset !== 0) : [];
   const sourceLabel: Record<RoutingStatus["keySource"], string> = { modex: "Modex keychain", env: "TYPESAFE_API_KEY in the environment", "jev-config": "the jev CLI config (~/.config/jev/config.json)", "login-shell": "your login shell", none: "nowhere" };
   const keyAction = async (fn: () => Promise<RoutingStatus>) => {
+    if (operationRef.current) return;
+    operationRef.current = true;
     setKeyBusy(true);
     setKeyError(null);
     setTest(null);
@@ -106,9 +116,27 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
       setKeyError((err as Error).message);
     } finally {
       setKeyBusy(false);
+      operationRef.current = false;
+    }
+  };
+  const resetLearning = async () => {
+    if (operationRef.current || !window.confirm("Reset Auto routing's learned preferences? This applies immediately and cannot be undone.")) return;
+    operationRef.current = true;
+    setResetBusy(true);
+    setResetError(null);
+    setTest(null);
+    try {
+      setRouting(await bridge.invoke("routing:reset", undefined));
+    } catch (err) {
+      setResetError(`Could not confirm the learning reset: ${(err as Error).message || "unknown error"}. Reopen Settings to check the current learning state before retrying.`);
+    } finally {
+      setResetBusy(false);
+      operationRef.current = false;
     }
   };
   const runTest = async () => {
+    if (operationRef.current) return;
+    operationRef.current = true;
     setTest("running");
     try {
       const result = await bridge.invoke("routing:test", undefined);
@@ -116,26 +144,37 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
       try { setRouting(await bridge.invoke("routing:status", undefined)); } catch { /* The explicit test result is still useful if a status refresh fails. */ }
     } catch (err) {
       setTest({ ok: false, message: (err as Error).message, transport: "none", ms: 0 });
+    } finally {
+      operationRef.current = false;
     }
   };
 
   const save = async () => {
-    if (saving) return;
+    if (operationRef.current || savingRef.current) return;
     if (!jevModel) {
       setModelError("Enter a Jev model id before saving.");
       setSection("advanced");
       contentRef.current?.scrollTo(0, 0);
       return;
     }
+    operationRef.current = true;
+    savingRef.current = true;
     setSaving(true);
     setSaveError(null);
     try {
-      await onSave({ ...s, routing: { ...s.routing, jev_model: jevModel } });
+      const draft: Settings = {
+        ...s,
+        default_model: { ...s.default_model },
+        routing: { ...s.routing, allow_backends: [...s.routing.allow_backends], jev_model: jevModel },
+      };
+      await onSave(draft);
       onClose();
     } catch (err) {
       setSaveError((err as Error).message || "Could not save settings. Your draft is still here; retry or cancel.");
     } finally {
+      savingRef.current = false;
       setSaving(false);
+      operationRef.current = false;
     }
   };
   dismissBlockedRef.current = saving;

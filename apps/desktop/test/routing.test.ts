@@ -499,6 +499,30 @@ test("routing status retains explicit test failures and reset prevents an in-fli
   assert.deepEqual([invalidResponse.ok, invalidResponse.code, (await malformed.status()).lastTest?.ok], [false, "bad_response", false]);
 });
 
+test("replacing the key while a judge test is in flight invalidates that old result", async () => {
+  const home = tmpdir("modex-test-health-key-change-");
+  const { SecretStore, testCipher } = await import("../src/main/engine/secrets.js");
+  let release!: (response: JevResponse) => void;
+  const router = new Router({
+    home,
+    policy: () => ({ ...DEFAULT_ROUTING, jev_transport: "http" }),
+    listModels,
+    secrets: new SecretStore(home, testCipher),
+    transport: async () => new Promise<JevResponse>((resolve) => { release = resolve; }),
+  });
+
+  const pending = router.test();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  await router.setKey("fake-test-key-do-not-use");
+  release({ answers: { reachable: { type: "noul", noul: 0.95 } } });
+
+  const stale = await pending;
+  assert.deepEqual([stale.ok, stale.current], [true, false]);
+  const status = await router.status();
+  assert.equal(status.lastTest, undefined, "the old key's result cannot verify the replacement key");
+  assert.equal(status.live, true, "the newly resolved fake setup stays available");
+});
+
 test("router: enforces CLI-only, prefers CLI in Auto, and skips CLI for HTTPS", async () => {
   const home = tmpdir("modex-transport-policy-");
   const base = { home, listModels, env: { MODEX_NO_LOGIN_PATH: "1" }, keyResolver: { jevConfigPath: path.join(home, "no-config.json"), loginShell: async () => null } };

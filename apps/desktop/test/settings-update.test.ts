@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import path from "node:path";
 import { updateSettings } from "../src/main/engine/settings-update.js";
 import { Store } from "../src/main/engine/store.js";
@@ -56,6 +57,45 @@ test("failed settings persistence does not invalidate the active router setup", 
   const router = { reset: () => { resets++; } } as unknown as Router;
   assert.throws(() => updateSettings(failingStore, router, { routing: { ...DEFAULT_ROUTING, jev_transport: "http" } }), /disk is read-only/);
   assert.equal(resets, 0);
+});
+
+test("a real state-file write failure keeps settings and explicit router health unchanged, then permits retry", async () => {
+  const home = tmpdir("modex-settings-write-failure-");
+  const store = new Store(home);
+  store.updateSettings({ default_backend: store.settings.default_backend });
+  const router = new Router({
+    home,
+    policy: () => store.settings.routing,
+    listModels: async () => ({ models: [] }),
+    transport: async () => ({ answers: { reachable: { type: "noul", noul: 0.9 } } }),
+  });
+  const original = store.settings;
+  const tested = await router.test();
+  assert.equal(tested.ok, true);
+  assert.equal((await router.status()).transport.kind, "http");
+  const file = path.join(home, "app", "state.json");
+  const persistedBefore = fs.readFileSync(file, "utf8");
+  const blocker = `${file}.tmp`;
+  fs.mkdirSync(blocker);
+
+  assert.throws(
+    () => updateSettings(store, router, { routing: { ...original.routing, jev_model: "jev-next-model" } }),
+    /EISDIR|illegal operation on a directory|is a directory/i,
+  );
+  assert.equal(store.settings.routing.jev_model, original.routing.jev_model, "failed persistence does not publish the draft in memory");
+  assert.equal(fs.readFileSync(file, "utf8"), persistedBefore, "failed persistence leaves the saved file intact");
+  let status = await router.status();
+  assert.equal(status.model, original.routing.jev_model);
+  assert.equal(status.transport.kind, "http");
+  assert.equal(status.lastTest?.ok, true, "the still-active setup retains its explicit health result");
+
+  fs.rmSync(blocker, { recursive: true });
+  const saved = updateSettings(store, router, { routing: { ...original.routing, jev_model: "jev-next-model" } });
+  assert.equal(saved.routing.jev_model, "jev-next-model");
+  status = await router.status();
+  assert.equal(status.model, "jev-next-model");
+  assert.equal(status.transport.kind, "http");
+  assert.equal(status.lastTest, undefined, "a successful identity change invalidates old health");
 });
 
 test("unrelated saves retain explicit health and fit; a model save clears health and is used by the next test", async () => {
