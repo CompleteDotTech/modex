@@ -22,6 +22,14 @@ release with `SHA256SUMS.txt`) is spelled out in the v0.0.3 review.
 
 ## On `main`, not yet released
 
+- **Jev settings and routing constraints** (#40–#50). CLI-only transport is enforced;
+  saved routing configuration invalidates cached setup; existing sessions cannot be
+  switched by Auto; supported-effort selection respects the ceiling and stops unsafe
+  routes before execution. Settings separates navigation and immediate credential actions
+  from drafts, retains failed-save drafts, distinguishes configuration from verified
+  connection health, and exposes judge model/allowed backends. Evidence and the acceptance
+  checklist are in [the settings review](reviews/2026-10-01-jev-settings-review.md).
+
 - **Signed and notarized macOS builds** (`notarize`, 2026-10-01). Developer ID signature,
   hardened runtime with library validation kept on, notarized and stapled, verified by
   `scripts/release-mac.sh`, which also runs in the new `Release` workflow on a `v*` tag and

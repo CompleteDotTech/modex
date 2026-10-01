@@ -54,6 +54,11 @@ The judge itself is reached one of two ways (Settings → Judge transport):
 - **Built-in HTTPS** (`POST https://api.typesafe.ai/v1/systemone`): the same request from
   Modex's own process, used when the CLI is absent or the policy says so.
 
+Transport selection is explicit: **Auto** prefers the CLI and may fall back to HTTPS;
+**Always the jev CLI** never uses HTTPS if its executable is unavailable; **Always HTTPS**
+does not inspect the CLI. Saving routing settings invalidates resolved transport setup
+without clearing learned preferences or disrupting an already-running turn.
+
 "Test judge" sends one tiny question through whichever is active and shows the answer or
 the API's own error sentence (a `402` with no credits, a `401` for a rejected key). A
 rejection disables Jev for the session — no per-turn retry latency — until the key changes
@@ -77,9 +82,8 @@ deterministically, and every step that changes the outcome adds a reason to the 
    hard-to-reverse blast radius; a quick answer with low complexity pins tier 0; posture
    shifts one tier down (economy) or up (quality); the learned per-task offset is added;
    clamped to 0–3; capped at 2 once the daily premium budget is spent.
-3. **Backend.** Stays put unless `allow_backend_switch` is on **and** switching would not
-   throw away a CLI session (no session yet, or the request does not depend on prior
-   turns). Even then it only moves when the current CLI cannot reach the target tier or is
+3. **Backend.** Stays put unless `allow_backend_switch` is on **and** the thread has no
+   existing CLI session. Even then it only moves to an allowed backend when the current CLI cannot reach the target tier or is
    unavailable. Mid-thread switches lose the CLI's context, so this is off by default.
 4. **Model.** The highest rung at or below the target tier on that backend
    (`routing/catalog.ts`). The ladder is rebuilt from the CLI's live model list: Claude's
@@ -90,6 +94,11 @@ deterministically, and every step that changes the outcome adds a reason to the 
    explicit speed signal drops one; `max_effort` caps it; the budget caps it at high. The
    result snaps to an effort the model actually lists. Claude gets `--effort`, Codex gets
    the per-turn `effort` field.
+   Supported-effort matching and low-confidence routes also obey the ceiling. If an Auto
+   turn cannot establish a supported effort within the limit, it stops before coding
+   execution with an explanation instead of silently using an unknown provider default.
+   The offline mock backend has no reasoning-effort dimension. Blocked turns do not consume
+   the routing budget or teach learned preferences.
 6. **Fast mode.** Only when the user signalled speed, the task is not reasoning-heavy, the
    pick is tier ≤ 1, and the model offers it. Codex: the `fast` service tier for this turn
    only (`serviceTierForTurn`). Claude: `--settings '{"fastMode":true}'` for the session.
@@ -133,9 +142,25 @@ last 200 routing records with outcomes, which is the dataset a future calibrated
 
 ## Bounds you control
 
-Settings → Auto routing: posture, effort ceiling, minimum judge confidence, premium turns per
-day, fast-mode allowance, backend switching, and whether new threads start on Auto. All of
-these are `settings.routing` in `~/.modex/app/state.json`.
+Settings has separate General, Coding CLIs, Auto routing, and Advanced sections, with Save
+and Cancel kept visible while the content scrolls. Auto routing exposes posture, effort
+ceiling, minimum judge confidence, premium turns per day, fast-mode allowance, backend
+switching, and whether new threads start on Auto, plus the judge model and allowed coding
+backends. All of these are `settings.routing` in `~/.modex/app/state.json`.
+
+Ordinary settings are drafts until Save. Saving waits for persistence; a failed save keeps
+the draft available for retry. A view-refresh failure after persistence is reported as a
+refresh failure rather than claiming that the save failed. Cancel, Escape, and backdrop
+dismissal discard drafts and are blocked while Save is pending.
+
+Credential Save/Clear and Reset learning are separate immediate actions: Cancel does not
+undo them. Learning reset requires confirmation. Keys remain encrypted outside state.json;
+the UI receives only masked key metadata.
+
+Test judge uses the saved judge configuration. If transport, executable, or judge model
+has an unsaved change, apply it before testing. Configured/untested, explicitly verified,
+and failed tests are distinct; results identify their configuration and are invalidated
+when that configuration changes. Opening Settings never performs a paid provider ping.
 
 ## Which CLIs, and local models
 
@@ -162,4 +187,6 @@ holds; evaluate Gemini CLI as the third backend when its headless approvals can 
   applying a route before a turn.
 - End to end: `npm run test:e2e` toggles Auto on the mock backend and checks the receipt.
 - Live: export `TYPESAFE_API_KEY`, start Modex, turn on Auto, send a request; the receipt
-  reads "Jev 0.xx" and Settings shows "Jev is live".
+  reads "Jev 0.xx". Settings distinguishes configured transport from a successful explicit
+  Test judge result; a routing receipt alone is not a claim that all provider capabilities
+  or future availability have been verified.
