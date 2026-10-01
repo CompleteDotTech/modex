@@ -118,6 +118,13 @@ test("Jev test health identifies the tested setup, stays explicit, and HTTP-only
   await dialog.getByRole("button", { name: "Test judge" }).click();
   await expect(tid(page, "routing-test")).toContainText("tested HTTPS");
   await expect(tid(page, "routing-verification")).toContainText("Verified · HTTPS");
+  const executable = dialog.locator(".field").filter({ hasText: "jev executable" }).locator("input");
+  const savedExecutable = await executable.inputValue();
+  await executable.fill("/tmp/changed-jev");
+  await expect(tid(page, "routing-verification")).toHaveText("Configured · untested");
+  await expect(dialog.getByRole("button", { name: "Test judge" })).toBeDisabled();
+  await executable.fill(savedExecutable);
+  await expect(tid(page, "routing-verification")).toContainText("Verified · HTTPS");
   const transport = dialog.locator(".field").filter({ hasText: "Judge transport" }).locator("select");
   await transport.selectOption("auto");
   await expect(tid(page, "routing-test-draft")).toBeVisible();
@@ -154,10 +161,16 @@ test("settings save stays pending through dismissal attempts and preserves draft
   await app.evaluate(() => (globalThis as any).__modexE2EReleaseSettingsSave());
   await expect(tid(page, "settings-save-error")).toContainText("fake persistence failure");
   await expect(mode).toHaveValue("agent");
+  await app.evaluate(({ ipcMain }) => {
+    ipcMain.removeHandler("state:get");
+    ipcMain.handle("state:get", async () => { throw new Error("fake refresh failure"); });
+  });
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(dialog.getByRole("button", { name: "Saving…" })).toBeDisabled();
   await app.evaluate(() => (globalThis as any).__modexE2EReleaseSettingsSave());
   await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole("alert")).toContainText("Settings were saved, but Modex could not refresh its view:");
+  await expect(page.getByRole("alert")).toContainText("fake refresh failure");
 });
 
 test("streaming does not reparse completed Markdown", async () => {
