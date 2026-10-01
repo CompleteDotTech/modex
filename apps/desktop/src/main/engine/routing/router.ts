@@ -62,6 +62,8 @@ export class Router {
   private readonly ladders = new Map<BackendId, { at: number; rungs: Candidate[]; error?: string }>();
   /** Set after an auth or billing rejection: retrying every turn would only add latency. */
   private jevDisabled: string | null = null;
+  /** The last explicit Settings test. Status reads this without making a provider request. */
+  private lastTest: (RoutingTest & { at: number }) | undefined;
 
   constructor(private readonly o: RouterOptions) {
     this.fit = new Fit(path.join(o.home, "app", "routing-fit.json"));
@@ -73,6 +75,7 @@ export class Router {
     this.setupGeneration++;
     this.setupPromise = null;
     this.jevDisabled = null;
+    this.lastTest = undefined;
   }
 
   private setup(): Promise<Setup> {
@@ -116,17 +119,26 @@ export class Router {
   async test(): Promise<RoutingTest> {
     const started = Date.now();
     const generation = this.setupGeneration;
+    const model = this.o.policy().jev_model || DEFAULT_JEV_MODEL;
     const s = await this.setup();
-    if (!s.transport) return { ok: false, message: s.unavailableReason ?? s.key.problem ?? "Jev is unavailable with the current transport settings.", transport: "none", ms: Date.now() - started };
+    const tested = { transport: s.kind, executable: s.kind === "cli" ? s.cli?.bin ?? null : null, model } as const;
+    if (!s.transport) return this.recordTest({ ok: false, message: s.unavailableReason ?? s.key.problem ?? "Jev is unavailable with the current transport settings.", transport: "none", tested, current: generation === this.setupGeneration, ms: Date.now() - started }, generation);
     try {
-      const res = await s.transport({ model: this.o.policy().jev_model || DEFAULT_JEV_MODEL, state: "ping", questions: { reachable: { type: "noul", instructions: "This state is the single word 'ping'." } } });
+      const res = await s.transport({ model, state: "ping", questions: { reachable: { type: "noul", instructions: "This state is the single word 'ping'." } } });
       const a = res.answers.reachable;
+      if (!a || a.type !== "noul" || !Number.isFinite(a.noul) || a.noul < 0 || a.noul > 1) throw new JevError("Jev returned no valid reachable answer.", "bad_response");
       if (generation === this.setupGeneration) this.jevDisabled = null;
-      return { ok: true, message: `Jev answered via ${s.kind === "cli" ? `the jev CLI ${s.cli?.version ?? ""}`.trim() : "HTTPS"} (${res.usage?.input_tokens ?? "?"} input tokens${a && a.type === "noul" ? `, p=${a.noul.toFixed(2)}` : ""}).`, transport: s.kind, ms: Date.now() - started };
+      return this.recordTest({ ok: true, message: `Jev answered via ${s.kind === "cli" ? `the jev CLI ${s.cli?.version ?? ""}`.trim() : "HTTPS"} (${res.usage?.input_tokens ?? "?"} input tokens${a && a.type === "noul" ? `, p=${a.noul.toFixed(2)}` : ""}).`, transport: s.kind, tested, current: generation === this.setupGeneration, ms: Date.now() - started }, generation);
     } catch (err) {
       const e = err instanceof JevError ? err : new JevError((err as Error).message, "unknown");
-      return { ok: false, message: e.message, code: e.code, status: e.status, transport: s.kind, ms: Date.now() - started };
+      if (generation === this.setupGeneration && (e.code === "auth" || e.code === "billing")) this.jevDisabled = `Jev is off for this session — ${e.message} Fix the key or credits and restart Modex.`;
+      return this.recordTest({ ok: false, message: e.message, code: e.code, status: e.status, transport: s.kind, tested, current: generation === this.setupGeneration, ms: Date.now() - started }, generation);
     }
+  }
+
+  private recordTest(result: RoutingTest, generation: number): RoutingTest {
+    if (generation === this.setupGeneration && result.current !== false) this.lastTest = { ...result, at: Date.now() };
+    return result;
   }
 
   /** Model ladders are cached for a minute; the CLIs' lists rarely change mid-session. */
@@ -162,6 +174,7 @@ export class Router {
       transport: s.kind === "cli" && s.cli ? { kind: "cli", bin: s.cli.bin, version: s.cli.version } : { kind: s.kind },
       secrets: { backend: this.secrets.backend, available: this.secrets.available(), present: sec.present, savedAt: sec.savedAt },
       model: this.o.policy().jev_model || DEFAULT_JEV_MODEL,
+      lastTest: this.lastTest,
       questionSetVersion: QUESTION_SET_VERSION,
       fit: { tasks, premiumToday: this.fit.premiumToday(), routes: fit.history.length },
     };

@@ -95,22 +95,34 @@ test("Settings owns focus, traps Tab, blocks app shortcuts, and restores focus o
 });
 
 test("Jev test health identifies the tested setup, stays explicit, and HTTP-only does not claim the CLI is missing", async () => {
-  await tid(page, "open-settings").click();
-  const dialog = tid(page, "settings");
-  await expect(dialog.locator(".field").filter({ hasText: "jev executable" }).locator("small")).toContainText("not used or checked in HTTP-only mode");
   const status = await page.evaluate(() => window.modex!.invoke("routing:status", undefined));
   await app.evaluate(({ ipcMain }, current) => {
     ipcMain.removeHandler("routing:test");
     ipcMain.handle("routing:test", async () => ({ ok: true, message: "fake Jev answered", transport: "http", ms: 4, tested: { transport: "http", executable: null, model: current.model }, current: true }));
     ipcMain.removeHandler("routing:status");
-    ipcMain.handle("routing:status", async () => ({ ...current, lastTest: { ok: true, message: "fake Jev answered", transport: "http", ms: 4, tested: { transport: "http", executable: null, model: current.model }, current: true, at: Date.now() } }));
+    ipcMain.handle("routing:status", async () => ({ ...current, live: true, detail: undefined, transport: { kind: "http" }, fit: { ...current.fit, routes: 1 }, lastTest: { ok: true, message: "fake Jev answered", transport: "http", ms: 4, tested: { transport: "http", executable: null, model: current.model }, current: true, at: Date.now() } }));
+    ipcMain.removeHandler("routing:reset");
+    ipcMain.handle("routing:reset", async () => ({ ...current, live: true, detail: undefined, transport: { kind: "http" }, fit: { ...current.fit, routes: 0 } }));
   }, status);
+  await tid(page, "open-settings").click();
+  const dialog = tid(page, "settings");
+  await expect(dialog.locator(".field").filter({ hasText: "jev executable" }).locator("small")).toContainText("not used or checked in HTTP-only mode");
+  let resetMessage = "";
+  page.once("dialog", async (dialog) => { resetMessage = dialog.message(); await dialog.dismiss(); });
+  await dialog.getByRole("button", { name: "Reset learning…" }).click();
+  expect(resetMessage).toMatch(/Reset Auto routing's learned preferences/);
+  await expect(dialog.getByRole("button", { name: "Reset learning…" })).toBeVisible();
+  page.once("dialog", async (confirmation) => { await confirmation.accept(); });
+  await dialog.getByRole("button", { name: "Reset learning…" }).click();
+  await expect(dialog.getByRole("button", { name: "Reset learning…" })).toHaveCount(0);
   await dialog.getByRole("button", { name: "Test judge" }).click();
   await expect(tid(page, "routing-test")).toContainText("tested HTTPS");
   await expect(tid(page, "routing-verification")).toContainText("Verified · HTTPS");
   const transport = dialog.locator(".field").filter({ hasText: "Judge transport" }).locator("select");
   await transport.selectOption("auto");
   await expect(tid(page, "routing-test-draft")).toBeVisible();
+  await expect(dialog.locator(".field").filter({ hasText: "jev executable" }).locator("small")).toContainText("Auto selected HTTPS");
+  await expect(dialog.locator(".field").filter({ hasText: "jev executable" }).locator("small")).not.toContainText("not found on PATH");
   await expect(dialog.getByRole("button", { name: "Test judge" })).toBeDisabled();
   await expect(tid(page, "routing-verification")).toHaveText("Configured · untested");
   await dialog.getByRole("button", { name: "Cancel" }).click();
@@ -119,26 +131,32 @@ test("Jev test health identifies the tested setup, stays explicit, and HTTP-only
 test("settings save stays pending through dismissal attempts and preserves drafts for retry", async () => {
   await app.evaluate(({ ipcMain }) => {
     let attempts = 0;
+    let release: (() => void) | undefined;
     ipcMain.removeHandler("settings:update");
     ipcMain.handle("settings:update", async () => {
       attempts++;
-      await new Promise((resolve) => setTimeout(resolve, 120));
-      if (attempts === 1) throw new Error("fake persistence failure");
+      await new Promise<void>((resolve, reject) => {
+        release = () => attempts === 1 ? reject(new Error("fake persistence failure")) : resolve();
+      });
     });
+    (globalThis as any).__modexE2EReleaseSettingsSave = () => release?.();
   });
   await tid(page, "open-settings").click();
   const dialog = tid(page, "settings");
   const mode = dialog.locator(".field").filter({ hasText: "Default mode" }).locator("select");
-  await mode.selectOption("plan");
+  await mode.selectOption("agent");
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(dialog.getByRole("button", { name: "Saving…" })).toBeDisabled();
   await page.locator(".modal-backdrop").click({ position: { x: 1, y: 1 } });
   await expect(dialog).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(dialog).toBeVisible();
+  await app.evaluate(() => (globalThis as any).__modexE2EReleaseSettingsSave());
   await expect(tid(page, "settings-save-error")).toContainText("fake persistence failure");
-  await expect(mode).toHaveValue("plan");
+  await expect(mode).toHaveValue("agent");
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "Saving…" })).toBeDisabled();
+  await app.evaluate(() => (globalThis as any).__modexE2EReleaseSettingsSave());
   await expect(dialog).toHaveCount(0);
 });
 

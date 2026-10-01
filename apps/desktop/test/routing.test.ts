@@ -430,6 +430,75 @@ test("router: prefers the jev CLI when found, stores a hand-entered key in the k
   assert.equal((await rejecting.status()).live, true);
 });
 
+test("routing status retains only explicit test health and records its effective model and transport", async () => {
+  const home = tmpdir("modex-test-health-");
+  const { SecretStore, testCipher } = await import("../src/main/engine/secrets.js");
+  let calls = 0;
+  const router = new Router({
+    home,
+    policy: () => ({ ...DEFAULT_ROUTING, jev_transport: "http", jev_model: "jev-test-model" }),
+    listModels,
+    secrets: new SecretStore(home, testCipher),
+    transport: async () => { calls++; return { answers: { reachable: { type: "noul", noul: 0.9 } } }; },
+  });
+  const before = await router.status();
+  assert.equal(before.lastTest, undefined);
+  assert.equal(calls, 0, "opening/refreshing status never pings the provider");
+  const result = await router.test();
+  assert.deepEqual([result.ok, result.tested, result.current], [true, { transport: "http", executable: null, model: "jev-test-model" }, true]);
+  const after = await router.status();
+  assert.deepEqual([after.lastTest?.ok, after.lastTest?.tested], [true, result.tested]);
+  assert.equal(typeof after.lastTest?.at, "number");
+  assert.equal(calls, 1, "only the explicit test sends a provider request");
+  router.reset();
+  assert.equal((await router.status()).lastTest, undefined, "a configuration reset invalidates prior health");
+});
+
+test("routing status retains explicit test failures and reset prevents an in-flight old result from becoming current", async () => {
+  const home = tmpdir("modex-test-health-reset-");
+  const { SecretStore, testCipher } = await import("../src/main/engine/secrets.js");
+  let release!: (response: JevResponse) => void;
+  const router = new Router({
+    home,
+    policy: () => ({ ...DEFAULT_ROUTING, jev_transport: "http" }),
+    listModels,
+    secrets: new SecretStore(home, testCipher),
+    transport: async () => new Promise<JevResponse>((resolve) => { release = resolve; }),
+  });
+  const pending = router.test();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  router.reset();
+  release({ answers: { reachable: { type: "noul", noul: 0.1 } } });
+  const stale = await pending;
+  assert.equal(stale.current, false);
+  assert.equal((await router.status()).lastTest, undefined);
+
+  for (const [code, expectedLive] of [["network", true], ["auth", false], ["billing", false]] as const) {
+    const failureHome = `${home}-${code}`;
+    const failing = new Router({
+      home: failureHome,
+      policy: () => ({ ...DEFAULT_ROUTING, jev_transport: "http" }),
+      listModels,
+      secrets: new SecretStore(failureHome, testCipher),
+      transport: async () => { throw new JevError(`fake ${code} failure`, code, code === "billing" ? 402 : code === "auth" ? 401 : undefined); },
+    });
+    const failed = await failing.test();
+    assert.deepEqual([failed.ok, failed.code], [false, code]);
+    const status = await failing.status();
+    assert.deepEqual([status.lastTest?.message, status.live], [`fake ${code} failure`, expectedLive]);
+  }
+  const malformedHome = `${home}-malformed`;
+  const malformed = new Router({
+    home: malformedHome,
+    policy: () => ({ ...DEFAULT_ROUTING, jev_transport: "http" }),
+    listModels,
+    secrets: new SecretStore(malformedHome, testCipher),
+    transport: async () => ({ answers: {} } as JevResponse),
+  });
+  const invalidResponse = await malformed.test();
+  assert.deepEqual([invalidResponse.ok, invalidResponse.code, (await malformed.status()).lastTest?.ok], [false, "bad_response", false]);
+});
+
 test("router: enforces CLI-only, prefers CLI in Auto, and skips CLI for HTTPS", async () => {
   const home = tmpdir("modex-transport-policy-");
   const base = { home, listModels, env: { MODEX_NO_LOGIN_PATH: "1" }, keyResolver: { jevConfigPath: path.join(home, "no-config.json"), loginShell: async () => null } };
