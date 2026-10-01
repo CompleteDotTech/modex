@@ -252,6 +252,7 @@ export class ThreadRunner {
     const sink = this.sinkFor(threadId, l);
     this.setStatus(threadId, "running");
     let fast = false;
+    let routingBlocked: string | undefined;
     const auto = Boolean(thread.auto);
     if (auto) {
       // Auto: judge the request, then re-read the thread — the pick is applied as a thread update
@@ -261,8 +262,9 @@ export class ThreadRunner {
         const receipt = await this.router.route({ thread, text, items: l.items.slice(0, -1), project: { name: project?.name ?? "", branch: thread.worktree?.branch ?? null } }, abort.signal);
         this.addItem(threadId, receipt.item);
         const d = receipt.decision;
+        if (d.blocked) routingBlocked = d.reasons.at(-1) ?? "The reasoning-effort ceiling cannot be guaranteed.";
         if (d.backend !== thread.backend) this.updateThread(threadId, { backend: d.backend, model: d.model, effort: d.effort }, { fromRouter: true });
-        else if (d.model !== thread.model || d.effort !== thread.effort) this.updateThread(threadId, { model: d.model, effort: d.effort }, { fromRouter: true });
+        else if (!d.blocked && (d.model !== thread.model || d.effort !== thread.effort)) this.updateThread(threadId, { model: d.model, effort: d.effort }, { fromRouter: true });
         fast = d.fast;
         thread = this.o.store.thread(threadId) ?? thread;
       } catch (err) {
@@ -272,6 +274,12 @@ export class ThreadRunner {
     if (abort.signal.aborted) {
       this.addItem(threadId, { id: newId(), kind: "notice", level: "info", text: "Stopped.", at: new Date().toISOString() });
       this.setStatus(threadId, "idle");
+      l.abort = null;
+      return;
+    }
+    if (routingBlocked) {
+      this.addItem(threadId, { id: newId(), kind: "notice", level: "error", text: `Auto routing stopped: ${routingBlocked}`, at: new Date().toISOString() });
+      this.setStatus(threadId, "error");
       l.abort = null;
       return;
     }
