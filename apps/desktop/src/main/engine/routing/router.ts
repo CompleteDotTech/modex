@@ -143,7 +143,8 @@ export class Router {
     const generation = this.setupGeneration;
     const model = this.o.policy().jev_model || DEFAULT_JEV_MODEL;
     const s = await this.setup();
-    const tested = { transport: s.kind, executable: s.kind === "cli" ? s.cli?.bin ?? null : null, model } as const;
+    const policy = this.o.policy();
+    const tested = { transport: s.kind, executable: s.kind === "cli" ? s.cli?.bin ?? null : policy.jev_transport === "http" ? null : policy.jev_bin || "jev", model } as const;
     if (!s.transport) return this.recordTest({ ok: false, message: s.unavailableReason ?? s.key.problem ?? "Jev is unavailable with the current transport settings.", transport: "none", tested, current: generation === this.setupGeneration, ms: Date.now() - started }, generation);
     try {
       const res = await s.transport({ model, state: "ping", questions: { reachable: { type: "noul", instructions: "This state is the single word 'ping'." } } });

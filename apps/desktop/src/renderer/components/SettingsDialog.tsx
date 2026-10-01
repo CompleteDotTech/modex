@@ -16,8 +16,8 @@ const testIdentity = (tested: NonNullable<RoutingTest["tested"]>) =>
   tested.transport === "cli"
     ? `jev CLI ${tested.executable ?? "(unknown executable)"} · ${tested.model}`
     : tested.transport === "http"
-      ? `HTTPS · ${tested.model}`
-      : `unavailable · ${tested.model}`;
+      ? `HTTPS${tested.executable ? ` (CLI ${tested.executable} not selected)` : ""} · ${tested.model}`
+      : `unavailable${tested.executable ? ` · CLI ${tested.executable}` : ""} · ${tested.model}`;
 
 export function SettingsDialog({ settings, onSave, onClose }: Props) {
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -88,7 +88,7 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
   const lastTest = routing?.lastTest;
   const savedTestMatches = !!lastTest?.tested && sameJudgeDraft(r, settings.routing) &&
     lastTest.tested.transport === routing?.transport.kind && lastTest.tested.model === routing?.model &&
-    (lastTest.tested.transport !== "cli" || lastTest.tested.executable === routing?.transport.bin);
+    (r.jev_transport === "http" || lastTest.tested.executable === (routing?.transport.kind === "cli" ? routing.transport.bin : r.jev_bin || "jev"));
   const learned = routing ? Object.entries(routing.fit.tasks).filter(([, t]) => t.offset !== 0) : [];
   const sourceLabel: Record<RoutingStatus["keySource"], string> = { modex: "Modex keychain", env: "TYPESAFE_API_KEY in the environment", "jev-config": "the jev CLI config (~/.config/jev/config.json)", "login-shell": "your login shell", none: "nowhere" };
   const keyAction = async (fn: () => Promise<RoutingStatus>) => {
