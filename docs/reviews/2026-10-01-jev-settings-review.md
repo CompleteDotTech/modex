@@ -27,12 +27,57 @@ the reviewer must inspect the behavior and its integration before recording a di
 
 ## Review and validation
 
-Final reviewer disposition and exact-head validation evidence will be recorded after
-integration. The first preparatory delegations inherited the default model because their
+The independent `gpt-6-sol`/`xhigh` reviewer inspected the complete integrated diff and
+published issue bodies. All eleven acceptance checklists have a source and offline regression
+disposition; no material finding remains open in the reviewed tree:
+
+| Issue | Review disposition |
+| --- | --- |
+| #40 | Pass: CLI-only failure uses the heuristic; Auto prefers CLI then eligible HTTPS; HTTP skips CLI detection. Transport matrix uses fake key and CLI detection. |
+| #41 | Pass: persisted transport/executable/model changes reset cached setup without clearing Fit; generation checks keep old test/provider failures from changing new status. Tests cover replacements and failed writes. |
+| #42 | Pass: changed transport, executable, or judge model disables Test and invalidates visible verification; effective tested identity accompanies the result. Fake IPC exercises draft changes. |
+| #43 | Pass: immediate key/clear/reset wording and reset confirmation explain Cancel semantics. Pending immediate actions now block dismissal; password input stays masked and fake IPC avoids real secrets. |
+| #44 | Pass: a backend can switch only with explicit setting and no existing session; continuity scores do not grant authority. Deterministic tests cover availability and allowlists. |
+| #45 | Pass after review fix: selected and pinned efforts stay within advertised capabilities and ceilings, or Auto stops before backend execution. Spent budgets now also block top-tier-only and pinned top-tier routes; pinned premium turns count toward the limit. |
+| #46 | Pass: status distinguishes configured/untested, explicit success, and failure. Last test records transport, executable, model, time, and result; resets and draft changes invalidate old verification. Status inspection makes no provider request. |
+| #47 | Pass: HTTP says CLI is not checked; CLI availability feedback follows detection and selected transport. Fake transport matrix covers all modes. |
+| #48 | Pass: four navigable sections with fixed Save/Cancel, Auto section on open, focus containment/return, narrow/zoomed layout, and keyboard tab order. |
+| #49 | Pass: judge model and backend allowlist round-trip through persistence and routing tests. Empty list keeps the current backend; legacy Mock entries remain controllable. Existing sessions keep their backend/model/session until a permitted future decision. |
+| #50 | Pass after review fix: save awaits persistence, blocks duplicate submission and dismissal, retains a failed draft for retry, and distinguishes refresh failure. A successful save response now updates renderer state even if the full-state refresh fails. |
+
+Review findings and fixes:
+
+- **P1, premium limit bypass:** `routing/policy.ts` could choose a tier-3-only model after the
+  daily target had been reduced to tier 2, and low-confidence pinned routes could keep tier 3.
+  `routing/router.ts` also omitted pinned premium routes from the daily counter. Both paths now
+  stop when the budget is spent, and every selected premium Auto route counts. Deterministic
+  policy and router tests cover the before/after cases.
+- **P2, stale configuration feedback:** `SettingsDialog.tsx` could let its opening status
+  request resolve after a successful immediate key action and replace fresh status. A request
+  generation now rejects the stale response; fake IPC delays and resolves it in a regression test.
+- **P2, pending operation feedback:** `SettingsDialog.tsx` ended the visible Test pending state
+  before the status refresh finished, while its operation guard still rejected actions. It also
+  allowed dismissal during immediate operations. The dialog remains busy through refresh and
+  blocks Cancel, Escape, and backdrop dismissal until each operation settles. Fake IPC checks
+  delayed refresh and dismissal.
+- **P2, saved-state refresh failure:** `App.tsx` persisted settings and closed the dialog, but
+  a failed subsequent `state:get` left the renderer's settings snapshot stale. The successful
+  `settings:update` response now updates that snapshot before refresh; a fake refresh failure
+  proves the saved value is present when Settings reopens.
+
+The reviewer re-read the final `origin/main..HEAD` changes after these fixes, including
+route blocking before backend execution, Fit counting, async status ownership, save retry,
+and settings dismissal. `npm run build` passed. Focused offline unit checks passed 39/39;
+the broader settings/review Playwright group passed 20 tests with one macOS-only skip on
+Windows. The required full suite and
+hosted macOS protected check remain final-head delivery gates, to be recorded by the
+integration owner. No live provider or coding turn was invoked for this review.
+
+The first preparatory delegations inherited the default model because their
 full-history forks ignored overrides. Their changes were retained as starting code; all
 four finishing implementation lanes were then delegated with fresh contexts and verified
 from session records to use `gpt-6-luna` with `high` reasoning. The final independent
-review must likewise be verified as `gpt-6-sol` with `xhigh` reasoning. The requested fast
+review was verified from its session record as `gpt-6-sol` with `xhigh` reasoning. The requested fast
 service tier was unavailable in the delegation interface and was reported to the user.
 
 Baseline platform limitations were reproduced before integration: the Windows suite assumes

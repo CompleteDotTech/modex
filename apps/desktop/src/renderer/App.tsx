@@ -271,7 +271,9 @@ export function App() {
   const openPath = (p: string) => act(() => bridge.invoke("shell:openPath", { path: p }));
   const openTerminal = (p: string) => act(() => bridge.invoke("shell:openTerminal", { path: p }));
   const saveSettings = async (patch: Partial<Settings>): Promise<void> => {
-    await bridge.invoke("settings:update", patch);
+    const saved = await bridge.invoke("settings:update", patch);
+    // The update response is authoritative even if the subsequent full-state refresh fails.
+    if (saved) setState((current) => current ? { ...current, settings: saved } : current);
     try {
       await refresh();
     } catch (err) {

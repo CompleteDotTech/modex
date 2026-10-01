@@ -222,7 +222,7 @@ export class Router {
       fitOffset: this.fit.offsetFor(judgments.task),
     });
     const premium = decision.tier === 3 || decision.effort === "xhigh" || decision.effort === "max";
-    if (!decision.blocked) this.fit.recordRoute({ threadId: thread.id, task: judgments.task, source, backend: decision.backend, model: decision.model, effort: decision.effort, fast: decision.fast, tier: decision.tier, confidence: judgments.taskConfidence, premium: premium && !decision.pinned });
+    if (!decision.blocked) this.fit.recordRoute({ threadId: thread.id, task: judgments.task, source, backend: decision.backend, model: decision.model, effort: decision.effort, fast: decision.fast, tier: decision.tier, confidence: judgments.taskConfidence, premium });
 
     const item: RouteReceipt["item"] = {
       id: `route-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,

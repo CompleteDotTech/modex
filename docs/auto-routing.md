@@ -98,6 +98,9 @@ deterministically, and every step that changes the outcome adds a reason to the 
    Supported-effort matching and low-confidence routes also obey the ceiling. If an Auto
    turn cannot establish a supported effort within the limit, it stops before coding
    execution with an explanation instead of silently using an unknown provider default.
+   Once the daily premium budget is spent, Auto also stops if the only usable model is top
+   tier or a low-confidence judgment pins a top-tier model. Pinned premium Auto routes count
+   toward the same daily limit.
    The offline mock backend has no reasoning-effort dimension. Blocked turns do not consume
    the routing budget or teach learned preferences.
 6. **Fast mode.** Only when the user signalled speed, the task is not reasoning-heavy, the

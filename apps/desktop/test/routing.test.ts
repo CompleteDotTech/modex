@@ -256,6 +256,27 @@ test("router: Jev judgments become a receipt item, the fit records the route, an
   assert.equal((await budget.status()).fit.tasks.feature!.overridesUp, 1);
 });
 
+test("pinned premium Auto routes count toward the daily limit and block a second top-tier turn", async () => {
+  const home = tmpdir("modex-pinned-premium-");
+  const router = new Router({
+    home,
+    policy: () => ({ ...DEFAULT_ROUTING, premium_turns_per_day: 1 }),
+    listModels: async () => ({ models: [m("gpt-6-astra", { efforts: CODEX_EFFORTS })] }),
+    transport: async () => jevAnswers("feature", 2.8, {
+      task: { type: "choice", choice: "feature", probabilities: { feature: 0.1 }, confidence: 0.1 },
+    }),
+  });
+  const request = { thread: thread(), text: "large feature", items: [], project: { name: "demo" } };
+  const first = await router.route(request);
+  assert.equal(first.decision.pinned, true);
+  assert.equal(first.decision.blocked, undefined);
+  assert.equal((await router.status()).fit.premiumToday, 1);
+
+  const second = await router.route(request);
+  assert.equal(second.decision.blocked, true);
+  assert.equal((await router.status()).fit.premiumToday, 1, "a blocked route does not consume another turn");
+});
+
 test("router: Jev failing or absent falls back to the heuristic and says so in the receipt", async () => {
   const home = tmpdir("modex-home-");
   const failing = new Router({ home, policy: () => DEFAULT_ROUTING, listModels, transport: async () => { throw new JevError("TypeSafe is overloaded.", "overloaded", 529); } });
