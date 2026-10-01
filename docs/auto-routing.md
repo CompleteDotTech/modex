@@ -56,8 +56,9 @@ The judge itself is reached one of two ways (Settings → Judge transport):
 
 Transport selection is explicit: **Auto** prefers the CLI and may fall back to HTTPS;
 **Always the jev CLI** never uses HTTPS if its executable is unavailable; **Always HTTPS**
-does not inspect the CLI. Saving routing settings invalidates resolved transport setup
-without clearing learned preferences or disrupting an already-running turn.
+does not inspect the CLI. Saving changed judge transport, executable, or model settings
+invalidates resolved setup without clearing learned preferences or disrupting an
+already-running turn. General, posture-only, and no-op saves retain connection-test health.
 
 "Test judge" sends one tiny question through whichever is active and shows the answer or
 the API's own error sentence (a `402` with no credits, a `401` for a rejected key). A
@@ -148,14 +149,21 @@ ceiling, minimum judge confidence, premium turns per day, fast-mode allowance, b
 switching, and whether new threads start on Auto, plus the judge model and allowed coding
 backends. All of these are `settings.routing` in `~/.modex/app/state.json`.
 
-Ordinary settings are drafts until Save. Saving waits for persistence; a failed save keeps
-the draft available for retry. A view-refresh failure after persistence is reported as a
+Ordinary settings are drafts until Save. Saving waits for persistence before publishing
+new in-memory settings; a failed save keeps both the active configuration and the draft
+available for retry. A view-refresh failure after persistence is reported as a
 refresh failure rather than claiming that the save failed. Cancel, Escape, and backdrop
-dismissal discard drafts and are blocked while Save is pending.
+dismissal discard drafts and are blocked while an asynchronous settings action is pending.
+Draft edits and other actions are disabled until the current operation settles.
 
 Credential Save/Clear and Reset learning are separate immediate actions: Cancel does not
 undo them. Learning reset requires confirmation. Keys remain encrypted outside state.json;
 the UI receives only masked key metadata.
+
+The allowed coding-backend list governs switching destinations; it does not move an
+existing session or enable switching by itself. An empty list keeps the current backend.
+Legacy Mock entries remain available for offline routing until explicitly disabled in
+Advanced / demo; the menu identifies them separately from coding CLIs.
 
 Test judge uses the saved judge configuration. If transport, executable, or judge model
 has an unsaved change, apply it before testing. Configured/untested, explicitly verified,
