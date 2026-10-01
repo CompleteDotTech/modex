@@ -94,6 +94,100 @@ test("Settings owns focus, traps Tab, blocks app shortcuts, and restores focus o
   await expect(trigger).toBeFocused();
 });
 
+test("Settings sections navigate by keyboard and advanced Jev policy saves and reopens", async () => {
+  const trigger = tid(page, "open-settings");
+  await trigger.click();
+  const dialog = tid(page, "settings");
+  const nav = tid(page, "settings-nav");
+  const routing = nav.getByRole("button", { name: "Auto routing" });
+  await expect(tid(page, "settings-routing-section")).toBeVisible();
+  await expect(tid(page, "routing-posture")).toBeVisible();
+
+  const general = nav.getByRole("button", { name: "General" });
+  await general.focus();
+  await page.keyboard.press("Enter");
+  await expect(dialog.getByRole("heading", { name: "General" })).toBeVisible();
+  await routing.focus();
+  await page.keyboard.press("Enter");
+  await expect(tid(page, "settings-routing-section")).toBeVisible();
+
+  const advanced = nav.getByRole("button", { name: "Advanced / demo" });
+  await advanced.click();
+  await expect(tid(page, "jev-model")).toHaveValue("jev-latest");
+  await tid(page, "jev-model").fill("   ");
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("Enter a Jev model id before saving");
+  await expect(dialog).toBeVisible();
+  await tid(page, "jev-model").fill("jev-review-model");
+  const codex = dialog.getByRole("checkbox", { name: "Codex" });
+  const claude = dialog.getByRole("checkbox", { name: "Claude" });
+  await expect(codex).toBeChecked();
+  await expect(claude).toBeChecked();
+  await claude.uncheck();
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+
+  const saved = JSON.parse(fs.readFileSync(path.join(home, "app", "state.json"), "utf8"));
+  expect(saved.settings.routing.jev_model).toBe("jev-review-model");
+  expect(saved.settings.routing.allow_backends).toEqual(["codex"]);
+  await trigger.click();
+  await advanced.click();
+  await expect(tid(page, "jev-model")).toHaveValue("jev-review-model");
+  await expect(codex).toBeChecked();
+  await expect(claude).not.toBeChecked();
+
+  await codex.uncheck();
+  await expect(dialog.getByText(/If neither is selected, Auto stays on the thread’s current backend/)).toBeVisible();
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await trigger.click();
+  await advanced.click();
+  await expect(codex).not.toBeChecked();
+  await expect(claude).not.toBeChecked();
+  await expect(JSON.parse(fs.readFileSync(path.join(home, "app", "state.json"), "utf8")).settings.routing.allow_backends).toEqual([]);
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+});
+
+test("editing coding backends preserves a legacy Mock routing entry", async () => {
+  await app.close();
+  const file = path.join(home, "app", "state.json");
+  const persisted = JSON.parse(fs.readFileSync(file, "utf8"));
+  persisted.settings.routing = { ...persisted.settings.routing, allow_backends: ["codex", "claude", "mock"] };
+  fs.writeFileSync(file, JSON.stringify(persisted));
+  ({ app, page } = await launch(home));
+
+  await tid(page, "open-settings").click();
+  const dialog = tid(page, "settings");
+  await dialog.getByRole("button", { name: "Advanced / demo" }).click();
+  await dialog.getByRole("checkbox", { name: "Claude" }).uncheck();
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  const saved = JSON.parse(fs.readFileSync(file, "utf8"));
+  expect(saved.settings.routing.allow_backends).toEqual(["codex", "mock"]);
+  await expect(dialog).toHaveCount(0);
+});
+
+test("Settings keeps Save and Cancel visible in a short zoomed window", async () => {
+  await page.setViewportSize({ width: 430, height: 470 });
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(1.5));
+  await tid(page, "open-settings").click();
+  const dialog = tid(page, "settings");
+  const content = tid(page, "settings-content");
+  const footer = tid(page, "settings-actions");
+  await expect(tid(page, "settings-routing-section")).toBeVisible();
+  expect(await content.evaluate((el) => el.scrollHeight)).toBeGreaterThan(await content.evaluate((el) => el.clientHeight));
+  const viewport = page.viewportSize()!;
+  const before = await footer.boundingBox();
+  expect(before).not.toBeNull();
+  expect(before!.y + before!.height).toBeLessThanOrEqual(viewport.height);
+  await content.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await expect(dialog.getByRole("button", { name: "Save", exact: true })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Cancel" })).toBeVisible();
+  const after = await footer.boundingBox();
+  expect(after!.y).toBe(before!.y);
+  expect(after!.y + after!.height).toBeLessThanOrEqual(viewport.height);
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+});
+
 test("Jev test health identifies the tested setup, stays explicit, and HTTP-only does not claim the CLI is missing", async () => {
   const status = await page.evaluate(() => window.modex!.invoke("routing:status", undefined));
   await app.evaluate(({ ipcMain }, current) => {
@@ -150,6 +244,7 @@ test("settings save stays pending through dismissal attempts and preserves draft
   });
   await tid(page, "open-settings").click();
   const dialog = tid(page, "settings");
+  await dialog.getByRole("button", { name: "General" }).click();
   const mode = dialog.locator(".field").filter({ hasText: "Default mode" }).locator("select");
   await mode.selectOption("agent");
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
