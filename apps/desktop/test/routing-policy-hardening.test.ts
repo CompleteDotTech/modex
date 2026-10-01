@@ -40,6 +40,29 @@ test("backend switching requires no live session even when Jev says context is i
   }, policy));
   assert.equal(withSession.backend, "codex");
   assert.ok(withSession.reasons.some((reason) => /keep its session/.test(reason)));
+
+  const highContinuityWithSession = decide(input({
+    current: { backend: "codex", model: "current", effort: "low", hasSession: true }, ladders,
+    judgments: judgments({ complexity: 2.8, dependsOnPriorTurns: 1 }),
+  }, policy));
+  assert.equal(highContinuityWithSession.backend, "codex", "the judge cannot grant session-discard authority at any continuity score");
+});
+
+test("an unavailable current backend only fails over with explicit consent and no session", () => {
+  const ladders = {
+    codex: [],
+    claude: [candidate("claude", "opus", ["low", "medium", "high", "xhigh"], 3)],
+  };
+  const allowed = decide(input({
+    current: { backend: "codex", model: "missing", effort: "low", hasSession: false }, ladders,
+  }, { allow_backend_switch: true, allow_backends: ["claude"] }));
+  assert.equal(allowed.backend, "claude");
+
+  const sessionKept = decide(input({
+    current: { backend: "codex", model: "missing", effort: "low", hasSession: true }, ladders,
+  }, { allow_backend_switch: true, allow_backends: ["claude"] }));
+  assert.equal(sessionKept.backend, "codex");
+  assert.equal(sessionKept.blocked, true, "the policy cannot safely run the unavailable current route with unknown effort capability");
 });
 
 test("advanced allowed-backend restrictions govern switching; an empty allowlist stays on the current CLI", () => {
@@ -93,6 +116,39 @@ test("low-confidence pinned routes are capped or blocked, including unknown mode
   assert.equal(unknown.blocked, true);
   assert.equal(unknown.effort, undefined);
   assert.ok(unknown.reasons.some((reason) => /Cannot honor/.test(reason)));
+
+  const unsupportedButBelowCap = decide(input({
+    current: { backend: "codex", model: "high-only", effort: "low", hasSession: false },
+    ladders: { codex: [candidate("codex", "high-only", ["high"], 2)] },
+    judgments: judgments({ taskConfidence: 0.2 }),
+  }, { max_effort: "low" }));
+  assert.equal(unsupportedButBelowCap.blocked, true, "a stored low value is not proof that a high-only model will honor it");
+  assert.equal(unsupportedButBelowCap.effort, undefined);
+
+  const supportedAlternative = decide(input({
+    current: { backend: "codex", model: "high-only", effort: "low", hasSession: false },
+    ladders: { codex: [candidate("codex", "high-only", ["high"], 2)] },
+    judgments: judgments({ taskConfidence: 0.2 }),
+  }, { max_effort: "high" }));
+  assert.equal(supportedAlternative.effort, "high", "choose an advertised supported effort when it remains under the ceiling");
+  assert.equal(supportedAlternative.blocked, undefined);
+
+  const unreported = decide(input({
+    current: { backend: "codex", model: "unknown-list", effort: "low", hasSession: false },
+    ladders: { codex: [candidate("codex", "unknown-list", [], 2)] },
+    judgments: judgments({ taskConfidence: 0.2 }),
+  }, { max_effort: "low" }));
+  assert.equal(unreported.blocked, true, "an explicit value cannot establish support when the CLI reports no capabilities");
+});
+
+test("pinned routes also apply the premium effort ceiling", () => {
+  const pinned = decide(input({
+    current: { backend: "codex", model: "premium", effort: "xhigh", hasSession: false },
+    ladders: { codex: [candidate("codex", "premium", ["high", "xhigh", "max"], 3)] },
+    judgments: judgments({ taskConfidence: 0.1 }), premiumExhausted: true,
+  }, { max_effort: "max" }));
+  assert.equal(pinned.effort, "high");
+  assert.ok(pinned.reasons.some((reason) => /premium-turn budget/.test(reason)));
 });
 
 test("missing model lists and premium budget cannot bypass the configured ceiling", () => {

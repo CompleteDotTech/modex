@@ -263,7 +263,10 @@ export class ThreadRunner {
         this.addItem(threadId, receipt.item);
         const d = receipt.decision;
         if (d.blocked) routingBlocked = d.reasons.at(-1) ?? "The reasoning-effort ceiling cannot be guaranteed.";
-        if (d.backend !== thread.backend) this.updateThread(threadId, { backend: d.backend, model: d.model, effort: d.effort }, { fromRouter: true });
+        // A blocked route is diagnostic evidence only. Never let it mutate the thread or
+        // discard its current backend session, even if a router implementation returns a
+        // partially populated decision alongside `blocked`.
+        if (!d.blocked && d.backend !== thread.backend) this.updateThread(threadId, { backend: d.backend, model: d.model, effort: d.effort }, { fromRouter: true });
         else if (!d.blocked && (d.model !== thread.model || d.effort !== thread.effort)) this.updateThread(threadId, { model: d.model, effort: d.effort }, { fromRouter: true });
         fast = d.fast;
         thread = this.o.store.thread(threadId) ?? thread;

@@ -66,14 +66,19 @@ function pinnedEffort(input: DecisionInput, candidate: Candidate | undefined, re
   const configuredCap = effortIndex(input.policy.max_effort);
   if (configuredCap === undefined) return undefined;
   const cap = input.premiumExhausted ? Math.min(configuredCap, effortIndex("high")!) : configuredCap;
-  const requested = effortIndex(input.current.effort);
-  if (requested !== undefined && requested <= cap && EFFORTS[requested] === input.current.effort) return input.current.effort as EffortLevel;
-  if (candidate && candidate.efforts.length) {
-    const target = EFFORTS[Math.min(requested ?? cap, cap)]!;
-    const selected = fitEffort(candidate, target, EFFORTS[cap]!);
-    if (selected) return selected;
+  if (input.premiumExhausted && configuredCap > effortIndex("high")!) {
+    reasons.push("Daily premium-turn budget used up → capped at high reasoning effort.");
   }
-  return undefined;
+  const requested = effortIndex(input.current.effort);
+  // A persisted effort is only safe when the live catalogue confirms that the current model
+  // accepts it. Otherwise the CLI may ignore the setting and use an unknown, higher default.
+  // The same rule applies when the effort list itself is absent: Auto cannot prove the ceiling.
+  if (!candidate || candidate.efforts.length === 0) return undefined;
+  if (requested !== undefined && requested <= cap && candidate.efforts.includes(input.current.effort!)) {
+    return input.current.effort as EffortLevel;
+  }
+  const target = EFFORTS[Math.min(requested ?? cap, cap)]!;
+  return fitEffort(candidate, target, EFFORTS[cap]!);
 }
 
 export function decide(input: DecisionInput): Decision {
