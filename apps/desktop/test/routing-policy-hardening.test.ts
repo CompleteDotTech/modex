@@ -22,6 +22,40 @@ const input = (over: Partial<DecisionInput> = {}, policy: Partial<RoutingPolicy>
   }, fitOffset: 0, premiumExhausted: false, ...over,
 });
 
+test("an unsure judge uses the model default or medium when no effort was requested", () => {
+  for (const backend of ["claude", "codex"] as const) {
+    for (const defaultEffort of [undefined, "low", "max"]) {
+      const selected = decide(input({
+        current: { backend, model: "current", hasSession: true },
+        ladders: { [backend]: [{ ...candidate(backend, "current", ["low", "medium", "high", "xhigh", "max"]), defaultEffort }] },
+        judgments: judgments({ taskConfidence: 0.1 }),
+      }));
+      assert.equal(selected.pinned, true);
+      assert.equal(selected.blocked, undefined);
+      assert.equal(selected.effort, defaultEffort === "max" ? "xhigh" : defaultEffort ?? "medium");
+      assert.ok(selected.reasons.some((r) => r.includes("No effort requested")));
+      assert.ok(selected.reasons.every((r) => !r.includes("lowered to")));
+    }
+  }
+});
+
+test("an empty model resolves the CLI default on pinned turns and retains ceiling and budget checks", () => {
+  const request = input({
+    current: { backend: "codex", model: "", hasSession: true },
+    ladders: { codex: [{ ...candidate("codex", "default", ["low", "medium", "high", "xhigh"], 2), isDefault: true, defaultEffort: "high" }] },
+    judgments: judgments({ taskConfidence: 0.1 }),
+  }, { max_effort: "medium" });
+  const result = decide(request);
+  assert.equal(result.blocked, undefined);
+  assert.equal(result.model, "", "keep the CLI default selection and existing session");
+  assert.equal(result.effort, "medium");
+  const premium = decide({ ...request, premiumExhausted: true, ladders: { codex: [{ ...request.ladders.codex![0]!, tier: 3 }] } });
+  assert.equal(premium.blocked, true);
+  assert.equal(premium.tier, 3);
+  const unknown = decide({ ...request, ladders: { codex: [{ ...request.ladders.codex![0]!, isDefault: false }] } });
+  assert.equal(unknown.blocked, true, "do not guess a default when the CLI did not advertise one");
+});
+
 test("backend switching requires no live session even when Jev says context is independent", () => {
   const ladders = {
     codex: [candidate("codex", "current", ["low", "medium", "high", "xhigh"], 0)],

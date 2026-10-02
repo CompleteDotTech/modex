@@ -78,7 +78,9 @@ Jev's answers are raw judgments. The policy (`routing/policy.ts`) turns them int
 deterministically, and every step that changes the outcome adds a reason to the receipt:
 
 1. **Confidence gate.** If Jev's confidence in the task kind is below `min_confidence`
-   (default 0.6), Auto keeps whatever the thread was already using and says so.
+   (default 0.6), Auto keeps whatever the thread was already using and says so. A blank
+   model means the CLI's advertised default. When no effort was requested, it uses that
+   model's default effort or medium, matched to supported levels under the active ceiling.
 2. **Target tier.** Starts at the complexity score; +1 for deep reasoning; +1 for a wide or
    hard-to-reverse blast radius; a quick answer with low complexity pins tier 0; posture
    shifts one tier down (economy) or up (quality); the learned per-task offset is added;
@@ -91,6 +93,8 @@ deterministically, and every step that changes the outcome adds a reason to the 
    aliases (haiku 0 · sonnet 1 · opus 2 · fable 3) and Codex's catalogue (gpt-5.5 0 ·
    gpt-5.6-* 1 · gpt-6-luna/sol 2 · gpt-6-astra 3), with description hints for anything new
    and the middle tier for unknowns.
+   Successful non-empty lists are cached for a minute. A failed or empty list retries on
+   the next turn; discovery errors appear in receipts and any resulting stop message.
 5. **Effort.** Tier sets the base (low/medium/high/xhigh); deep reasoning bumps one; an
    explicit speed signal drops one; `max_effort` caps it; the budget caps it at high. The
    result snaps to an effort the model actually lists. Claude gets `--effort`, Codex gets
@@ -103,11 +107,18 @@ deterministically, and every step that changes the outcome adds a reason to the 
    toward the same daily limit.
    The offline mock backend has no reasoning-effort dimension. Blocked turns do not consume
    the routing budget or teach learned preferences.
+   Blocked receipts read "Auto blocked". A manual model repair after a block does not
+   teach a tier preference from an older successful route.
 6. **Fast mode.** Only when the user signalled speed, the task is not reasoning-heavy, the
    pick is tier ≤ 1, and the model offers it. Codex: the `fast` service tier for this turn
    only (`serviceTierForTurn`). Claude: `--settings '{"fastMode":true}'` for the session.
 
 Changing the policy never requires re-asking Jev; the raw judgments are reusable.
+
+Learning-file writes are best-effort after a safe decision: a write failure appears in
+the receipt without blocking the coding turn or changing its outcome. Premium counts and
+learning stay in memory for the session and are included in the next successful write.
+They cannot survive an app restart until persistence succeeds.
 
 ## The follow-up question
 

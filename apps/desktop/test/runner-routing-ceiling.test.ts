@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { Store } from "../src/main/engine/store.js";
 import { ThreadRunner } from "../src/main/engine/runner.js";
 import { Router } from "../src/main/engine/routing/router.js";
@@ -37,11 +39,45 @@ test("Auto stops before backend execution when no advertised effort fits the cei
     assert.equal(runs, 0, "the existing backend model was run after the policy rejected its effort capability");
     assert.equal(runner.status(thread.id), "error");
     assert.equal(router.fit.snapshot().history.length, 0, "a blocked turn must not teach the fit or consume a route budget");
-    assert.ok(runner.items(thread.id).some((item) => item.kind === "route" && item.reasons.some((reason) => /route was stopped/.test(reason))));
+    assert.ok(runner.items(thread.id).some((item) => item.kind === "route" && item.blocked && item.reasons.some((reason) => /route was stopped/.test(reason))));
     assert.ok(runner.items(thread.id).some((item) => item.kind === "notice" && item.level === "error" && /Auto routing stopped/.test(item.text)));
   } finally {
     await runner.dispose();
   }
+});
+
+test("learning-file write failures cannot block safe coding turns or turn a completion into a failure", async () => {
+  const home = tmpdir("modex-fit-write-failure-");
+  const store = new Store(home);
+  const project = store.addProject(gitRepo());
+  const runs: TurnOptions[] = [];
+  const model = { id: "gpt-6-luna", label: "Luna", efforts: ["high", "xhigh"], isDefault: true };
+  const backend: Backend = {
+    id: "codex", listModels: async () => [model], dispose: async () => {},
+    runTurn: async (_text, options) => { runs.push(options); return { status: "completed" }; },
+  };
+  const router = new Router({ home, policy: () => ({ ...DEFAULT_ROUTING, premium_turns_per_day: 1 }), transport: null,
+    listModels: async () => ({ models: [model] }),
+  });
+  const runner = new ThreadRunner({ home, store, emit: () => {}, router, backends: { codex: backend } });
+  const blocker = path.join(home, "app", "routing-fit.json.tmp");
+  fs.mkdirSync(blocker);
+  try {
+    const thread = await runner.createThread(project.id, { backend: "codex", auto: true });
+    await runner.send(thread.id, "design a complex architecture; be careful");
+    assert.equal(runs.length, 1);
+    assert.equal(runs[0]!.effort, "xhigh");
+    assert.equal(runner.status(thread.id), "idle");
+    assert.equal(router.fit.premiumToday(), 1);
+    assert.equal(router.fit.latest(thread.id)?.outcome, "completed");
+    assert.ok(runner.items(thread.id).some((item) => item.kind === "route" && item.reasons.some((reason) => /Could not save routing learning/.test(reason))));
+    fs.rmSync(blocker, { recursive: true });
+    await runner.send(thread.id, "design another complex architecture; be careful");
+    assert.equal(runs.length, 2);
+    assert.equal(runs[1]!.effort, "high", "the in-memory premium count still enforces the budget");
+    assert.equal(router.fit.premiumToday(), 1);
+    assert.equal(JSON.parse(fs.readFileSync(router.fit.file, "utf8")).history.length, 2, "a later write persists the retained learning");
+  } finally { await runner.dispose(); }
 });
 
 test("Auto routing exceptions cannot run a live backend with an unchecked effort", async () => {

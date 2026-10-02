@@ -203,9 +203,9 @@ test("Jev test health identifies the tested setup, stays explicit, and HTTP-only
   const status = await page.evaluate(() => window.modex!.invoke("routing:status", undefined));
   await app.evaluate(({ ipcMain }, current) => {
     ipcMain.removeHandler("routing:test");
-    ipcMain.handle("routing:test", async () => ({ ok: true, message: "fake Jev answered", transport: "http", ms: 4, tested: { transport: "http", executable: null, model: current.model }, current: true }));
+    ipcMain.handle("routing:test", async () => ({ ok: true, message: "fake Jev answered", transport: "http", ms: 4, tested: { executable: null, model: current.model }, current: true }));
     ipcMain.removeHandler("routing:status");
-    ipcMain.handle("routing:status", async () => ({ ...current, live: true, detail: undefined, transport: { kind: "http" }, fit: { ...current.fit, routes: 1 }, lastTest: { ok: true, message: "fake Jev answered", transport: "http", ms: 4, tested: { transport: "http", executable: null, model: current.model }, current: true, at: Date.now() } }));
+    ipcMain.handle("routing:status", async () => ({ ...current, live: true, detail: undefined, transport: { kind: "http" }, fit: { ...current.fit, routes: 1 }, lastTest: { ok: true, message: "fake Jev answered", transport: "http", ms: 4, tested: { executable: null, model: current.model }, at: Date.now() } }));
     ipcMain.removeHandler("routing:reset");
     ipcMain.handle("routing:reset", async () => ({ ...current, live: true, detail: undefined, transport: { kind: "http" }, fit: { ...current.fit, routes: 0 } }));
   }, status);
@@ -233,7 +233,8 @@ test("Jev test health identifies the tested setup, stays explicit, and HTTP-only
   const transport = dialog.locator(".field").filter({ hasText: "Judge transport" }).locator("select");
   await transport.selectOption("auto");
   await expect(tid(page, "routing-test-draft")).toBeVisible();
-  await expect(dialog.locator(".field").filter({ hasText: "jev executable" }).locator("small")).toContainText("Auto selected HTTPS");
+  await expect(dialog.locator(".field").filter({ hasText: "jev executable" }).locator("small")).toContainText("Draft transport or executable has not been checked");
+  await expect(dialog.locator(".field").filter({ hasText: "jev executable" }).locator("small")).not.toContainText("Auto selected HTTPS");
   await expect(dialog.locator(".field").filter({ hasText: "jev executable" }).locator("small")).not.toContainText("not found on PATH");
   await expect(dialog.getByRole("button", { name: "Test judge" })).toBeDisabled();
   await expect(tid(page, "routing-verification")).toHaveText("Configured · untested");
@@ -277,6 +278,20 @@ test("settings save stays pending through dismissal attempts and preserves draft
   await expect(dialog).toHaveCount(0);
   await expect(page.getByRole("alert")).toContainText("Settings were saved, but Modex could not refresh its view:");
   await expect(page.getByRole("alert")).toContainText("fake refresh failure");
+});
+
+test("blocked Auto receipts identify the stop while older pinned receipts still show Auto kept", async () => {
+  await app.evaluate(({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows()[0]!;
+    const receipt = { kind: "route", backend: "codex", model: "", effort: undefined, fast: false, source: "heuristic", task: "review", confidence: 0.9, complexity: 2, pinned: true, reasons: ["Cannot honor the effort ceiling; the route was stopped."], durationMs: 1, at: new Date().toISOString() };
+    win.webContents.send("thread:event", { type: "item", threadId: "one", item: { ...receipt, id: "blocked", blocked: true } });
+    win.webContents.send("thread:event", { type: "item", threadId: "one", item: { ...receipt, id: "legacy-pinned" } });
+  });
+  const receipts = items(page, "route");
+  await expect(tid(receipts.first(), "route-label")).toHaveText("Auto blocked Codex · CLI default");
+  await expect(tid(receipts.last(), "route-label")).toContainText("Auto kept");
+  await tid(receipts.first(), "item-toggle").click();
+  await expect(tid(receipts.first(), "item-body")).toContainText("Cannot honor the effort ceiling");
 });
 
 test("streaming does not reparse completed Markdown", async () => {

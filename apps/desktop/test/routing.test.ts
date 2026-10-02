@@ -231,6 +231,52 @@ const jevAnswers = (task: string, complexity: number, over: Partial<JevResponse[
   },
 });
 
+test("model discovery failures and empty results retry on the next turn, with the real error in blocked receipts", async () => {
+  for (const failure of ["reported", "thrown", "empty"] as const) {
+    let calls = 0;
+    const router = new Router({
+      home: tmpdir("modex-discovery-retry-"), policy: () => DEFAULT_ROUTING, transport: null,
+      listModels: async () => {
+        if (++calls === 1) {
+          if (failure === "thrown") throw new Error("app-server is restarting");
+          return { models: [], error: failure === "reported" ? "app-server is restarting" : undefined };
+        }
+        return { models: [m("gpt-6-luna", { efforts: CODEX_EFFORTS, isDefault: true })] };
+      },
+    });
+    const request = { thread: thread({ model: "" }), text: "review the repository", items: [], project: { name: "demo" } };
+    const first = await router.route(request);
+    assert.equal(first.item.blocked, true);
+    if (failure !== "empty") assert.match(first.decision.reasons.at(-1)!, /app-server is restarting/);
+    const second = await router.route(request);
+    assert.equal(second.decision.blocked, undefined);
+    assert.equal(calls, 2, "discovery must retry without waiting a minute");
+    await router.route(request);
+    assert.equal(calls, 2, "successful non-empty lists remain cached");
+  }
+});
+
+test("a manual model repair after a blocked turn never teaches an older successful route", async () => {
+  const home = tmpdir("modex-blocked-override-");
+  let policy: RoutingPolicy = { ...DEFAULT_ROUTING, max_effort: "high" };
+  const router = new Router({ home, policy: () => policy, transport: null,
+    listModels: async () => ({ models: [m("gpt-6-astra", { efforts: ["high"], isDefault: true }), m("gpt-5.5", { efforts: ["high"] })] }),
+  });
+  const request = { thread: thread(), text: "design a complex architecture", items: [], project: { name: "demo" } };
+  const previous = await router.route(request);
+  assert.equal(previous.decision.tier, 3);
+  router.noteOutcome("th1", "completed");
+  const before = router.fit.snapshot();
+  policy = { ...policy, max_effort: "low" };
+  const stopped = await router.route(request);
+  assert.equal(stopped.decision.blocked, true);
+  assert.equal(await router.noteOverride(thread(), "gpt-5.5"), undefined);
+  assert.deepEqual(router.fit.snapshot(), before);
+  policy = { ...policy, max_effort: "high" };
+  await router.route(request);
+  assert.deepEqual(await router.noteOverride(thread(), "gpt-5.5"), { task: previous.judgments.task, from: 3, to: 0 }, "a later safe route resumes normal learning");
+});
+
 test("router: Jev judgments become a receipt item, the fit records the route, and status reports live", async () => {
   const home = tmpdir("modex-home-");
   const sent: unknown[] = [];
@@ -466,7 +512,7 @@ test("routing status retains only explicit test health and records its effective
   assert.equal(before.lastTest, undefined);
   assert.equal(calls, 0, "opening/refreshing status never pings the provider");
   const result = await router.test();
-  assert.deepEqual([result.ok, result.tested, result.current], [true, { transport: "http", executable: null, model: "jev-test-model" }, true]);
+  assert.deepEqual([result.ok, result.tested, result.current], [true, { executable: null, model: "jev-test-model" }, true]);
   const after = await router.status();
   assert.deepEqual([after.lastTest?.ok, after.lastTest?.tested], [true, result.tested]);
   assert.equal(typeof after.lastTest?.at, "number");

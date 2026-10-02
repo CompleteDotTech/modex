@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { BackendId, EffortLevel, Mode, ModelInfo, RoutingPolicy, RoutingStatus, RoutingTest, Settings } from "../../shared/types";
 import { BACKENDS, EFFORT_LEVELS, MODES } from "../../shared/types";
+import { sameJudgeSettings, testMatchesJudge } from "../../shared/judge-settings";
 import { bridge } from "../bridge";
 
 interface Props {
@@ -9,15 +10,17 @@ interface Props {
   onClose: () => void;
 }
 
-const sameJudgeDraft = (a: RoutingPolicy, b: RoutingPolicy) =>
-  a.jev_transport === b.jev_transport && a.jev_bin === b.jev_bin && a.jev_model === b.jev_model;
-
-const testIdentity = (tested: NonNullable<RoutingTest["tested"]>) =>
-  tested.transport === "cli"
+const testIdentity = (test: RoutingTest) => {
+  const tested = test.tested!;
+  return test.transport === "cli"
     ? `jev CLI ${tested.executable ?? "(unknown executable)"} · ${tested.model}`
-    : tested.transport === "http"
+    : test.transport === "http"
       ? `HTTPS${tested.executable ? ` (CLI ${tested.executable} not selected)` : ""} · ${tested.model}`
       : `unavailable${tested.executable ? ` · CLI ${tested.executable}` : ""} · ${tested.model}`;
+};
+
+const errorMessage = (err: unknown, fallback: string) =>
+  (err instanceof Error ? err.message : "").replace(/^Error invoking remote method '[^']+':\s*(?:Error(?::\s*|\s*$))?/, "").trim() || fallback;
 
 export function SettingsDialog({ settings, onSave, onClose }: Props) {
   const [section, setSection] = useState<"general" | "clis" | "routing" | "advanced">("routing");
@@ -58,6 +61,7 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
   const [health, setHealth] = useState<Record<BackendId, { ok: boolean; detail: string }> | null>(null);
   const [lists, setLists] = useState<Partial<Record<BackendId, { models: ModelInfo[]; error?: string }>>>({});
   const [routing, setRouting] = useState<RoutingStatus | null>(null);
+  const [routingError, setRoutingError] = useState<string | null>(null);
   const [keyDraft, setKeyDraft] = useState("");
   const [keyBusy, setKeyBusy] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
@@ -68,7 +72,6 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [modelError, setModelError] = useState<string | null>(null);
   const operationRef = useRef(false);
-  const savingRef = useRef(false);
   const routingStatusRequestRef = useRef(0);
 
   dismissRef.current = () => { if (!dismissBlockedRef.current) closeRef.current(); };
@@ -77,8 +80,8 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
     void bridge.invoke("backends:health", undefined).then(setHealth).catch(() => setHealth(null));
     const request = ++routingStatusRequestRef.current;
     void bridge.invoke("routing:status", undefined)
-      .then((status) => { if (request === routingStatusRequestRef.current) setRouting(status); })
-      .catch(() => { if (request === routingStatusRequestRef.current) setRouting(null); });
+      .then((status) => { if (request === routingStatusRequestRef.current) { setRouting(status); setRoutingError(null); } })
+      .catch((err) => { if (request === routingStatusRequestRef.current) { setRouting(null); setRoutingError(errorMessage(err, "Could not load judge status.")); } });
     for (const b of ["codex", "claude"] as BackendId[]) void bridge.invoke("models:list", { backend: b }).then((r) => setLists((l) => ({ ...l, [b]: r }))).catch((err) => setLists((l) => ({ ...l, [b]: { models: [], error: (err as Error).message } })));
   }, []);
 
@@ -97,14 +100,11 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
   const setR = <K extends keyof RoutingPolicy>(k: K, v: RoutingPolicy[K]) => setS((x) => ({ ...x, routing: { ...x.routing, [k]: v } }));
   const r = s.routing;
   const jevModel = r.jev_model.trim();
-  const judgeDraftDirty = !sameJudgeDraft(r, settings.routing);
+  const judgeDraftDirty = !sameJudgeSettings(r, settings.routing);
   const lastTest = routing?.lastTest;
-  const savedTestMatches = !!lastTest?.tested && sameJudgeDraft(r, settings.routing) &&
-    lastTest.tested.transport === routing?.transport.kind && lastTest.tested.model === routing?.model &&
-    (r.jev_transport === "http" || lastTest.tested.executable === (routing?.transport.kind === "cli" ? routing.transport.bin : r.jev_bin || "jev"));
-  const testResultCurrent = !!test && test !== "running" && test.current !== false && !!test.tested && !judgeDraftDirty && !!routing &&
-    test.tested.transport === routing.transport.kind && test.tested.model === routing.model &&
-    (r.jev_transport === "http" || test.tested.executable === (routing.transport.kind === "cli" ? routing.transport.bin : r.jev_bin || "jev"));
+  const savedTestMatches = !!lastTest && !judgeDraftDirty && !!routing && testMatchesJudge(lastTest, routing, settings.routing);
+  const testResultStale = !!test && test !== "running" && !!test.tested &&
+    (test.current === false || judgeDraftDirty || (!!routing && !testMatchesJudge(test, routing, settings.routing)));
   const interactionLocked = saving || keyBusy || resetBusy || test === "running";
   const learned = routing ? Object.entries(routing.fit.tasks).filter(([, t]) => t.offset !== 0) : [];
   const sourceLabel: Record<RoutingStatus["keySource"], string> = { modex: "Modex keychain", env: "TYPESAFE_API_KEY in the environment", "jev-config": "the jev CLI config (~/.config/jev/config.json)", "login-shell": "your login shell", none: "nowhere" };
@@ -112,6 +112,7 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
     if (operationRef.current) return;
     operationRef.current = true;
     ++routingStatusRequestRef.current;
+    setRoutingError(null);
     setKeyBusy(true);
     setKeyError(null);
     setTest(null);
@@ -119,7 +120,10 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
       setRouting(await fn());
       setKeyDraft("");
     } catch (err) {
-      setKeyError((err as Error).message);
+      const message = errorMessage(err, "Could not update the key.");
+      setKeyError(message);
+      setRouting(null);
+      setRoutingError(message);
     } finally {
       setKeyBusy(false);
       operationRef.current = false;
@@ -129,6 +133,7 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
     if (operationRef.current || !window.confirm("Reset Auto routing's learned preferences? This applies immediately and cannot be undone.")) return;
     operationRef.current = true;
     ++routingStatusRequestRef.current;
+    setRoutingError(null);
     setResetBusy(true);
     setResetError(null);
     setTest(null);
@@ -136,6 +141,8 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
       setRouting(await bridge.invoke("routing:reset", undefined));
     } catch (err) {
       setResetError(`Could not confirm the learning reset: ${(err as Error).message || "unknown error"}. Reopen Settings to check the current learning state before retrying.`);
+      setRouting(null);
+      setRoutingError(errorMessage(err, "Could not refresh judge status after the learning reset."));
     } finally {
       setResetBusy(false);
       operationRef.current = false;
@@ -145,23 +152,32 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
     if (operationRef.current) return;
     operationRef.current = true;
     const request = ++routingStatusRequestRef.current;
+    setRoutingError(null);
     setTest("running");
     try {
       const result = await bridge.invoke("routing:test", undefined);
       try {
         const status = await bridge.invoke("routing:status", undefined);
-        if (request === routingStatusRequestRef.current) setRouting(status);
-      } catch { /* The explicit test result is still useful if a status refresh fails. */ }
+        if (request === routingStatusRequestRef.current) { setRouting(status); setRoutingError(null); }
+      } catch (err) {
+        if (request === routingStatusRequestRef.current) {
+          setRouting(null);
+          setRoutingError(errorMessage(err, "Could not refresh judge status."));
+        }
+      }
       setTest(result);
     } catch (err) {
-      setTest({ ok: false, message: (err as Error).message, transport: "none", ms: 0 });
+      const message = errorMessage(err, "Could not test the judge.");
+      setTest({ ok: false, message, transport: "none", ms: 0 });
+      setRouting(null);
+      setRoutingError(message);
     } finally {
       operationRef.current = false;
     }
   };
 
   const save = async () => {
-    if (operationRef.current || savingRef.current) return;
+    if (operationRef.current) return;
     if (!jevModel) {
       setModelError("Enter a Jev model id before saving.");
       setSection("advanced");
@@ -169,7 +185,6 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
       return;
     }
     operationRef.current = true;
-    savingRef.current = true;
     setSaving(true);
     setSaveError(null);
     try {
@@ -181,9 +196,9 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
       await onSave(draft);
       onClose();
     } catch (err) {
-      setSaveError((err as Error).message || "Could not save settings. Your draft is still here; retry or cancel.");
+      const detail = errorMessage(err, "");
+      setSaveError(detail ? `Could not save settings: ${detail}` : "Could not save settings.");
     } finally {
-      savingRef.current = false;
       setSaving(false);
       operationRef.current = false;
     }
@@ -269,7 +284,7 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
         <h3 id="settings-routing-title">Auto routing</h3>
         <p className="hint">Settings below are drafts until Save. API key changes, Clear, and learning reset apply immediately and remain applied if you cancel.</p>
         <p className="routing-status" data-testid="routing-status">
-          {routing === null ? "Checking the judge…" : routing.live ? (
+          {routingError ? <span className="warn">Judge status unavailable: {routingError} Use Test judge to retry with saved settings.</span> : routing === null ? "Checking the judge…" : routing.live ? (
             <span>
               Jev transport configured — {routing.transport.kind === "cli" ? `via the jev CLI ${routing.transport.version ?? ""} (${routing.transport.bin})` : "via Modex's own HTTPS call"}
               {routing.keyLast4 ? `, key ****${routing.keyLast4} from ${sourceLabel[routing.keySource]}` : routing.keySource === "none" ? ", key left to the CLI" : ""}
@@ -303,11 +318,11 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
         </div>
         {judgeDraftDirty && <p className="hint" data-testid="routing-test-draft">Transport, executable, or model draft differs from saved settings. Save or revert it before testing; the test never saves settings.</p>}
         {routing && <p className={`routing-test ${savedTestMatches ? (lastTest!.ok ? "ok" : "warn") : ""}`} data-testid="routing-verification">
-          {savedTestMatches ? `${lastTest!.ok ? "Verified" : "Last test failed"} · ${testIdentity(lastTest!.tested!)} · ${new Date(lastTest!.at).toLocaleString()} · ${lastTest!.message}${lastTest!.status ? ` (HTTP ${lastTest!.status})` : ""} · ${lastTest!.ms} ms` : routing.live ? "Configured · untested" : "Unavailable · untested"}
+          {savedTestMatches ? `${lastTest!.ok ? "Verified" : "Last test failed"} · ${testIdentity(lastTest!)} · ${new Date(lastTest!.at).toLocaleString()} · ${lastTest!.message}${lastTest!.status ? ` (HTTP ${lastTest!.status})` : ""} · ${lastTest!.ms} ms` : routing.live ? "Configured · untested" : "Unavailable · untested"}
         </p>}
-        {test && test !== "running" && <p className={`routing-test ${test.ok ? "ok" : "warn"}`} data-testid="routing-test">{test.ok ? "✓ " : "✗ "}{test.message}{test.tested ? ` · tested ${testIdentity(test.tested)}` : ""}{test.status ? ` (HTTP ${test.status})` : ""} · {test.ms} ms</p>}
+        {test && test !== "running" && <p className={`routing-test ${test.ok ? "ok" : "warn"}`} data-testid="routing-test">{test.ok ? "✓ " : "✗ "}{test.message}{test.tested ? ` · tested ${testIdentity(test)}` : ""}{test.status ? ` (HTTP ${test.status})` : ""} · {test.ms} ms</p>}
         {test === "running" && <p className="routing-test">Asking Jev…</p>}
-        {test && test !== "running" && !testResultCurrent && <p className="warn" data-testid="routing-test-stale">Settings changed while this test ran; its result does not verify the current configuration.</p>}
+        {testResultStale && <p className="warn" data-testid="routing-test-stale">Settings changed while this test ran; its result does not verify the current configuration.</p>}
         <div className="grid2">
           <label className="field">
             <span>Judge transport</span>
@@ -320,7 +335,7 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
           <label className="field">
             <span>jev executable</span>
             <input value={r.jev_bin} onChange={(e) => setR("jev_bin", e.target.value)} spellCheck={false} />
-            <small>{r.jev_transport === "http" ? "The jev CLI is not used or checked in HTTP-only mode." : routing?.transport.kind === "cli" ? `found: ${routing.transport.bin} ${routing.transport.version ?? ""}` : r.jev_transport === "auto" && routing?.transport.kind === "http" ? "Auto selected HTTPS; the jev CLI was not selected." : routing?.detail ? `CLI unavailable: ${routing.detail}` : "Checking the selected transport…"}</small>
+            <small>{judgeDraftDirty ? "Draft transport or executable has not been checked. Save or revert before testing." : routingError ? "Saved transport status is unavailable; use Test judge to retry." : settings.routing.jev_transport === "http" ? "The jev CLI is not used or checked in HTTP-only mode." : routing?.transport.kind === "cli" ? `found: ${routing.transport.bin} ${routing.transport.version ?? ""}` : settings.routing.jev_transport === "auto" && routing?.transport.kind === "http" ? "Auto selected HTTPS; the jev CLI was not selected." : routing?.detail ? `CLI unavailable: ${routing.detail}` : "Checking the saved transport…"}</small>
           </label>
         </div>
         <label className="check">
@@ -401,7 +416,7 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
         </section>}
         </div>
         <footer className="settings-footer" data-testid="settings-actions">
-          {saveError && <p className="warn" role="alert" data-testid="settings-save-error">Could not save settings: {saveError} Your draft is still here; retry or cancel.</p>}
+          {saveError && <p className="warn" role="alert" data-testid="settings-save-error">{saveError} Your draft is still here; retry or cancel.</p>}
           <div className="row end">
             <button className="btn" disabled={interactionLocked} onClick={onClose}>Cancel</button>
             <button className="btn primary" disabled={interactionLocked} onClick={() => void save()}>{saving ? "Saving…" : "Save"}</button>

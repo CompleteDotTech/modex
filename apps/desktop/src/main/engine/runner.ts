@@ -403,7 +403,8 @@ export class ThreadRunner {
     this.o.emit({ threadId, type: "thread", thread: t });
     // A hand-picked model on an Auto thread is the strongest signal the fit gets: the user
     // disagreed with the last pick. Only model changes count; effort tweaks stay within a tier.
-    if (!opts.fromRouter && current?.auto && patch.model && patch.model !== current.model && !patch.backend && this.slot(threadId).items.some((i) => i.kind === "route")) {
+    const lastRoute = [...this.slot(threadId).items].reverse().find((i) => i.kind === "route");
+    if (!opts.fromRouter && current?.auto && patch.model && patch.model !== current.model && !patch.backend && lastRoute && !lastRoute.blocked) {
       void this.router.noteOverride(current, patch.model).then((learned) => {
         if (learned) this.addItem(threadId, { id: newId(), kind: "notice", level: "info", text: `Noted — for ${learned.task.replace(/_/g, " ")} you chose tier ${learned.to} over Auto's tier ${learned.from}. Auto will lean that way next time.`, at: new Date().toISOString() });
       }).catch(() => {});

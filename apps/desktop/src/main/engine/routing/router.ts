@@ -59,11 +59,12 @@ export class Router {
   private setupPromise: Promise<Setup> | null = null;
   /** Invalidates session-level results from setup/provider work started with old settings. */
   private setupGeneration = 0;
-  private readonly ladders = new Map<BackendId, { at: number; rungs: Candidate[]; error?: string }>();
+  private readonly ladders = new Map<BackendId, { at: number; rungs: Candidate[] }>();
+  private readonly blockedThreads = new Set<string>();
   /** Set after an auth or billing rejection: retrying every turn would only add latency. */
   private jevDisabled: string | null = null;
   /** The last explicit Settings test. Status reads this without making a provider request. */
-  private lastTest: (RoutingTest & { at: number }) | undefined;
+  private lastTest: RoutingStatus["lastTest"];
 
   constructor(private readonly o: RouterOptions) {
     this.fit = new Fit(path.join(o.home, "app", "routing-fit.json"));
@@ -76,6 +77,12 @@ export class Router {
     this.setupPromise = null;
     this.jevDisabled = null;
     this.lastTest = undefined;
+  }
+
+  private disableOn(err: unknown, generation: number): void {
+    if (generation === this.setupGeneration && err instanceof JevError && (err.code === "auth" || err.code === "billing")) {
+      this.jevDisabled = `Jev is off for this session — ${err.message} Fix the key or credits and restart Modex.`;
+    }
   }
 
   private setup(): Promise<Setup> {
@@ -108,6 +115,7 @@ export class Router {
    * seen through it switches Jev off here too, so the key path and its failure state stay single.
    */
   async jev(): Promise<{ transport: JevTransport | null; model: string }> {
+    const generation = this.setupGeneration;
     const model = this.o.policy().jev_model || DEFAULT_JEV_MODEL;
     const { transport } = await this.setup();
     if (!transport || this.jevDisabled) return { transport: null, model };
@@ -117,7 +125,7 @@ export class Router {
         try {
           return await transport(req, signal);
         } catch (err) {
-          if (err instanceof JevError && (err.code === "auth" || err.code === "billing")) this.jevDisabled = `Jev is off for this session — ${err.message} Fix the key or credits and restart Modex.`;
+          this.disableOn(err, generation);
           throw err;
         }
       },
@@ -144,7 +152,7 @@ export class Router {
     const model = this.o.policy().jev_model || DEFAULT_JEV_MODEL;
     const s = await this.setup();
     const policy = this.o.policy();
-    const tested = { transport: s.kind, executable: s.kind === "cli" ? s.cli?.bin ?? null : policy.jev_transport === "http" ? null : policy.jev_bin || "jev", model } as const;
+    const tested = { executable: s.kind === "cli" ? s.cli?.bin ?? null : policy.jev_transport === "http" ? null : policy.jev_bin || "jev", model };
     if (!s.transport) return this.recordTest({ ok: false, message: s.unavailableReason ?? s.key.problem ?? "Jev is unavailable with the current transport settings.", transport: "none", tested, current: generation === this.setupGeneration, ms: Date.now() - started }, generation);
     try {
       const res = await s.transport({ model, state: "ping", questions: { reachable: { type: "noul", instructions: "This state is the single word 'ping'." } } });
@@ -154,13 +162,16 @@ export class Router {
       return this.recordTest({ ok: true, message: `Jev answered via ${s.kind === "cli" ? `the jev CLI ${s.cli?.version ?? ""}`.trim() : "HTTPS"} (${res.usage?.input_tokens ?? "?"} input tokens${a && a.type === "noul" ? `, p=${a.noul.toFixed(2)}` : ""}).`, transport: s.kind, tested, current: generation === this.setupGeneration, ms: Date.now() - started }, generation);
     } catch (err) {
       const e = err instanceof JevError ? err : new JevError((err as Error).message, "unknown");
-      if (generation === this.setupGeneration && (e.code === "auth" || e.code === "billing")) this.jevDisabled = `Jev is off for this session — ${e.message} Fix the key or credits and restart Modex.`;
+      this.disableOn(e, generation);
       return this.recordTest({ ok: false, message: e.message, code: e.code, status: e.status, transport: s.kind, tested, current: generation === this.setupGeneration, ms: Date.now() - started }, generation);
     }
   }
 
   private recordTest(result: RoutingTest, generation: number): RoutingTest {
-    if (generation === this.setupGeneration && result.current !== false) this.lastTest = { ...result, at: Date.now() };
+    if (generation === this.setupGeneration && result.current !== false) {
+      const { current: _current, ...test } = result;
+      this.lastTest = { ...test, at: Date.now() };
+    }
     return result;
   }
 
@@ -170,14 +181,16 @@ export class Router {
     if (hit && Date.now() - hit.at < 60_000) return hit.rungs;
     const r = await this.o.listModels(backend);
     const rungs = ladder(backend, r.models);
-    this.ladders.set(backend, { at: Date.now(), rungs, error: r.error });
+    if (r.error) throw new Error(`${backend} model discovery failed: ${r.error}`);
+    if (rungs.length) this.ladders.set(backend, { at: Date.now(), rungs });
+    else this.ladders.delete(backend);
     return rungs;
   }
 
   /** Tier of a model the user picked by hand, for the override signal. */
   async tierOfModel(backend: BackendId, model: string): Promise<number | undefined> {
     const rungs = await this.ladderFor(backend);
-    const c = rungs.find((x) => x.model === model);
+    const c = rungs.find((x) => model ? x.model === model : x.isDefault);
     return c ? c.tier : model ? tierOf({ id: model, label: model }) : undefined;
   }
 
@@ -208,6 +221,8 @@ export class Router {
     const generation = this.setupGeneration;
     const policy = this.o.policy();
     const { thread } = input;
+    // Until a new safe route succeeds, an override must not teach an older turn's preference.
+    this.blockedThreads.add(thread.id);
     const state = stateFor({ text: input.text, backend: thread.backend, model: thread.model, mode: thread.mode, plan: thread.plan, items: input.items, project: input.project });
 
     let judgments: Judgments;
@@ -224,18 +239,23 @@ export class Router {
         source = "jev";
       } catch (err) {
         const why = err instanceof JevError ? `${err.message} (${err.code})` : (err as Error).message;
-        if (generation === this.setupGeneration && err instanceof JevError && (err.code === "auth" || err.code === "billing")) this.jevDisabled = `Jev is off for this session — ${err.message} Fix the key or credits and restart Modex.`;
+        this.disableOn(err, generation);
         fallback = `Jev unavailable — ${why}; used the built-in heuristic.`;
         judgments = judgeHeuristically(state);
       }
     } else {
-      fallback = `${setup.unavailableReason ?? setup.key.problem ?? "No Jev transport available"}; used the built-in heuristic.`;
+      const why = (setup.unavailableReason ?? setup.key.problem ?? "No Jev transport available").replace(/[.!;]+$/, "");
+      fallback = `${why}; used the built-in heuristic.`;
       judgments = judgeHeuristically(state);
     }
 
     const backends = new Set<BackendId>([thread.backend, ...(policy.allow_backend_switch ? policy.allow_backends : [])]);
     const ladders: Partial<Record<BackendId, Candidate[]>> = {};
-    await Promise.all([...backends].map(async (b) => { ladders[b] = await this.ladderFor(b); }));
+    const discoveryErrors: string[] = [];
+    await Promise.all([...backends].map(async (b) => {
+      try { ladders[b] = await this.ladderFor(b); }
+      catch (err) { ladders[b] = []; discoveryErrors.push((err as Error).message); }
+    }));
 
     const premiumExhausted = policy.premium_turns_per_day != null && this.fit.premiumToday() >= policy.premium_turns_per_day;
     const decision = decide({
@@ -244,7 +264,18 @@ export class Router {
       fitOffset: this.fit.offsetFor(judgments.task),
     });
     const premium = decision.tier === 3 || decision.effort === "xhigh" || decision.effort === "max";
-    if (!decision.blocked) this.fit.recordRoute({ threadId: thread.id, task: judgments.task, source, backend: decision.backend, model: decision.model, effort: decision.effort, fast: decision.fast, tier: decision.tier, confidence: judgments.taskConfidence, premium });
+    decision.reasons.unshift(...discoveryErrors);
+    if (decision.blocked && discoveryErrors.length) {
+      decision.reasons[decision.reasons.length - 1] += ` ${discoveryErrors.join(" ")} Retry Auto to refresh the model list.`;
+    }
+    if (!decision.blocked) {
+      this.blockedThreads.delete(thread.id);
+      try {
+        this.fit.recordRoute({ threadId: thread.id, task: judgments.task, source, backend: decision.backend, model: decision.model, effort: decision.effort, fast: decision.fast, tier: decision.tier, confidence: judgments.taskConfidence, premium });
+      } catch (err) {
+        decision.reasons.push(`Could not save routing learning (${(err as Error).message}); this session retains its premium count and the safe route will run.`);
+      }
+    }
 
     const item: RouteReceipt["item"] = {
       id: `route-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
@@ -258,6 +289,7 @@ export class Router {
       confidence: Math.round(judgments.taskConfidence * 100) / 100,
       complexity: Math.round(judgments.complexity * 10) / 10,
       pinned: decision.pinned,
+      blocked: decision.blocked,
       reasons: fallback ? [fallback, ...decision.reasons] : decision.reasons,
       durationMs: Date.now() - started,
       at: new Date().toISOString(),
@@ -266,7 +298,7 @@ export class Router {
   }
 
   noteOutcome(threadId: string, outcome: "completed" | "failed" | "interrupted"): void {
-    this.fit.recordOutcome(threadId, outcome);
+    try { this.fit.recordOutcome(threadId, outcome); } catch { /* Learning persistence cannot change a coding turn's outcome. */ }
   }
 
   /**
@@ -294,15 +326,18 @@ export class Router {
         }
       }
     } catch (err) {
-      if (generation === this.setupGeneration && err instanceof JevError && (err.code === "auth" || err.code === "billing")) this.jevDisabled = `Jev is off for this session — ${err.message} Fix the key or credits and restart Modex.`;
+      this.disableOn(err, generation);
     }
     return signal?.aborted ? null : fallback;
   }
 
   /** The user picked a model by hand on an Auto thread. Returns what the fit learned, for a notice. */
   async noteOverride(thread: Thread, model: string): Promise<{ task: string; from: number; to: number } | undefined> {
+    if (this.blockedThreads.has(thread.id)) return undefined;
+    const previous = this.fit.latest(thread.id);
     const to = await this.tierOfModel(thread.backend, model);
     if (to === undefined) return undefined;
+    if (this.blockedThreads.has(thread.id) || this.fit.latest(thread.id) !== previous) return undefined;
     const r = this.fit.recordOverride(thread.id, to);
     return r ? { task: r.task, from: r.tier, to } : undefined;
   }

@@ -1,4 +1,5 @@
 import type { Settings } from "../../shared/types.js";
+import { sameJudgeSettings } from "../../shared/judge-settings.js";
 import type { Router } from "./routing/router.js";
 import type { Store } from "./store.js";
 
@@ -7,10 +8,6 @@ export function updateSettings(store: Pick<Store, "settings" | "updateSettings">
   const before = store.settings.routing;
   const settings = store.updateSettings(patch);
   const after = settings.routing;
-  if (patch.routing && (
-    before.jev_transport !== after.jev_transport ||
-    before.jev_bin !== after.jev_bin ||
-    before.jev_model !== after.jev_model
-  )) router.reset();
+  if (patch.routing && !sameJudgeSettings(before, after)) router.reset();
   return settings;
 }

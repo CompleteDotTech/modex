@@ -42,6 +42,8 @@ test("saving freezes the draft until persistence resolves and keeps it available
 
   await app.evaluate(() => (globalThis as any).__modexRejectSettingsSave());
   await expect(tid(page, "settings-save-error")).toContainText("fake persistence failure");
+  await expect(tid(page, "settings-save-error")).not.toContainText("Error invoking remote method");
+  expect((await tid(page, "settings-save-error").innerText()).match(/Your draft is still here; retry or cancel\./g)).toHaveLength(1);
   await expect(dialog).toHaveAttribute("aria-busy", "false");
   await expect(tid(dialog, "settings-content")).not.toHaveAttribute("inert", "");
   await expect(mode).toHaveValue("agent");
@@ -70,8 +72,8 @@ test("a failed learning reset stays in the dialog and explains how to check the 
 test("a test locks settings while running and marks its result stale after a relevant draft change", async () => {
   const initial = await page.evaluate(() => window.modex!.invoke("routing:status", undefined));
   await app.evaluate(({ ipcMain }, current) => {
-    const tested = { transport: "http", executable: null, model: current.model };
-    const lastTest = { ok: true, message: "fake Jev answered", transport: "http", ms: 4, tested, current: true, at: Date.now() };
+    const tested = { executable: null, model: current.model };
+    const lastTest = { ok: true, message: "fake Jev answered", transport: "http", ms: 4, tested, at: Date.now() };
     ipcMain.removeHandler("routing:status");
     ipcMain.handle("routing:status", async () => ({ ...current, live: true, detail: undefined, transport: { kind: "http" }, secrets: { ...current.secrets, present: true }, lastTest, fit: { ...current.fit, routes: 1 } }));
     ipcMain.removeHandler("routing:test");
@@ -177,4 +179,124 @@ test("a saved setting remains visible on reopen when the full-state refresh fail
   await reopened.getByRole("button", { name: "General" }).click();
   await expect(reopened.getByRole("combobox", { name: "Default mode for new threads" })).toHaveValue("chat");
   await reopened.getByRole("button", { name: "Cancel" }).click();
+});
+
+test("unsaved Auto and CLI drafts never claim a transport was checked", async () => {
+  const initial = await page.evaluate(() => window.modex!.invoke("routing:status", undefined));
+  await app.evaluate(({ ipcMain }, current) => {
+    ipcMain.removeHandler("routing:status");
+    ipcMain.handle("routing:status", async () => ({ ...current, live: true, detail: undefined, transport: { kind: "http" } }));
+  }, initial);
+  await tid(page, "open-settings").click();
+  const dialog = tid(page, "settings");
+  const hint = dialog.locator(".field").filter({ hasText: "jev executable" }).locator("small");
+  for (const transport of ["auto", "cli"]) {
+    await dialog.getByRole("combobox", { name: "Judge transport" }).selectOption(transport);
+    await expect(hint).toHaveText("Draft transport or executable has not been checked. Save or revert before testing.");
+    await expect(dialog.getByRole("button", { name: "Test judge" })).toBeDisabled();
+  }
+  await dialog.getByRole("combobox", { name: "Judge transport" }).selectOption("http");
+  await expect(hint).toHaveText("The jev CLI is not used or checked in HTTP-only mode.");
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+});
+
+test("an IPC test rejection explains the failure without claiming settings changed", async () => {
+  await app.evaluate(({ ipcMain }) => {
+    ipcMain.removeHandler("routing:test");
+    ipcMain.handle("routing:test", async () => { throw new Error("fake judge IPC failure"); });
+  });
+  await tid(page, "open-settings").click();
+  const dialog = tid(page, "settings");
+  await dialog.getByRole("button", { name: "Test judge" }).click();
+  await expect(tid(dialog, "routing-test")).toContainText("fake judge IPC failure");
+  await expect(tid(dialog, "routing-test")).not.toContainText("Error invoking remote method");
+  await expect(tid(dialog, "routing-test-stale")).toHaveCount(0);
+  await expect(tid(dialog, "routing-status")).toContainText("Judge status unavailable");
+  await expect(dialog.getByRole("button", { name: "Test judge" })).toBeEnabled();
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+});
+
+test("testing before opening status resolves handles a failed refresh and permits a fresh retry", async () => {
+  const initial = await page.evaluate(() => window.modex!.invoke("routing:status", undefined));
+  await app.evaluate(({ ipcMain }, current) => {
+    let calls = 0;
+    let releaseOpening: (() => void) | undefined;
+    ipcMain.removeHandler("routing:status");
+    ipcMain.handle("routing:status", () => {
+      if (++calls === 1) return new Promise((resolve) => { releaseOpening = () => resolve(current); });
+      if (calls === 2) throw new Error("fake status refresh failure");
+      return { ...current, live: true, detail: undefined, transport: { kind: "http" } };
+    });
+    ipcMain.removeHandler("routing:test");
+    ipcMain.handle("routing:test", async () => ({ ok: true, message: "fake explicit response", transport: "http", ms: 1, tested: { executable: null, model: current.model }, current: true }));
+    (globalThis as any).__modexReleaseOpeningStatus = () => releaseOpening?.();
+  }, initial);
+
+  await tid(page, "open-settings").click();
+  const dialog = tid(page, "settings");
+  await expect(tid(dialog, "routing-status")).toContainText("Checking the judge");
+  await dialog.getByRole("button", { name: "Test judge" }).click();
+  await expect(tid(dialog, "routing-test")).toContainText("fake explicit response");
+  await expect(tid(dialog, "routing-status")).toContainText("fake status refresh failure");
+  await expect(tid(dialog, "routing-test-stale")).toHaveCount(0);
+  await app.evaluate(() => (globalThis as any).__modexReleaseOpeningStatus());
+  await expect(tid(dialog, "routing-status")).toContainText("Judge status unavailable");
+  await dialog.getByRole("button", { name: "Test judge" }).click();
+  await expect(tid(dialog, "routing-status")).toContainText("Jev transport configured");
+  await expect(tid(dialog, "routing-status")).not.toContainText("Judge status unavailable");
+  await expect(tid(dialog, "routing-test-stale")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+});
+
+test("failed immediate key and reset actions show unavailable status and permit recovery", async () => {
+  for (const action of ["key", "reset"] as const) {
+    const initial = await page.evaluate(() => window.modex!.invoke("routing:status", undefined));
+    await app.evaluate(({ ipcMain }, { current, action }) => {
+      let releaseOpening: (() => void) | undefined;
+      ipcMain.removeHandler("routing:status");
+      ipcMain.handle("routing:status", () => new Promise((resolve) => { releaseOpening = () => resolve(current); }));
+      ipcMain.removeHandler("routing:setKey");
+      ipcMain.handle("routing:setKey", async () => { throw new Error("fake key action failure"); });
+      ipcMain.removeHandler("routing:reset");
+      ipcMain.handle("routing:reset", async () => { throw new Error("fake reset action failure"); });
+      // Reset is only available after opening status loads; key save can run before it.
+      if (action === "reset") {
+        ipcMain.removeHandler("routing:status");
+        ipcMain.handle("routing:status", async () => ({ ...current, fit: { ...current.fit, routes: 1 } }));
+      }
+      (globalThis as any).__modexReleaseOpeningStatus = () => releaseOpening?.();
+      (globalThis as any).__modexRestoreRoutingStatus = () => {
+        ipcMain.removeHandler("routing:status");
+        ipcMain.handle("routing:status", async () => current);
+      };
+    }, { current: initial, action });
+    await tid(page, "open-settings").click();
+    const dialog = tid(page, "settings");
+    if (action === "key") {
+      await tid(dialog, "jev-key").locator('input[type="password"]').fill("fake-test-key");
+      await dialog.getByRole("button", { name: "Save key now" }).click();
+    } else {
+      page.once("dialog", async (confirmation) => confirmation.accept());
+      await dialog.getByRole("button", { name: "Reset learning…" }).click();
+    }
+    await expect(tid(dialog, "routing-status")).toContainText(`fake ${action} action failure`);
+    await app.evaluate(() => (globalThis as any).__modexReleaseOpeningStatus());
+    await expect(tid(dialog, "routing-status")).toContainText("Judge status unavailable");
+    await app.evaluate(() => (globalThis as any).__modexRestoreRoutingStatus());
+    await dialog.getByRole("button", { name: "Test judge" }).click();
+    await expect(tid(dialog, "routing-status")).not.toContainText("Judge status unavailable");
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+  }
+});
+
+test("an empty save failure message keeps one plain retry instruction", async () => {
+  await app.evaluate(({ ipcMain }) => {
+    ipcMain.removeHandler("settings:update");
+    ipcMain.handle("settings:update", async () => { throw new Error(""); });
+  });
+  await tid(page, "open-settings").click();
+  const dialog = tid(page, "settings");
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(tid(dialog, "settings-save-error")).toHaveText("Could not save settings. Your draft is still here; retry or cancel.");
+  await dialog.getByRole("button", { name: "Cancel" }).click();
 });

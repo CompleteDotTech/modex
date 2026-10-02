@@ -4,7 +4,7 @@ The living map of what has shipped, what is on `main` but unreleased, what is in
 what is next. Update it in the same PR that changes any of those; a reader should be able to
 plan the next session from this page alone. Release evidence lives in [`reviews/`](reviews/).
 
-_Last updated 2026-10-01._
+_Last updated 2026-10-02._
 
 ## Shipped
 
@@ -21,14 +21,6 @@ sequence (worktree → review doc → dist + packaged e2e → guarded merge → 
 release with `SHA256SUMS.txt`) is spelled out in the v0.0.3 review.
 
 ## On `main`, not yet released
-
-- **Jev settings and routing constraints** (#40–#50). CLI-only transport is enforced;
-  saved routing configuration invalidates cached setup; existing sessions cannot be
-  switched by Auto; supported-effort selection respects the ceiling and stops unsafe
-  routes before execution. Settings separates navigation and immediate credential actions
-  from drafts, retains failed-save drafts, distinguishes configuration from verified
-  connection health, and exposes judge model/allowed backends. Evidence and the acceptance
-  checklist are in [the settings review](reviews/2026-10-01-jev-settings-review.md).
 
 - **Signed and notarized macOS builds** (`notarize`, 2026-10-01). Developer ID signature,
   hardened runtime with library validation kept on, notarized and stapled, verified by
@@ -61,7 +53,13 @@ release with `SHA256SUMS.txt`) is spelled out in the v0.0.3 review.
   without it rather than being hidden.
 - **Open contributor PRs.**
   - #51 `jev-integration`: Jev settings, routing limits, and settings save transactions.
-    It conflicts with `main` and needs a rebase before review.
+    Rebased onto `main` after #54, #64 and #65, retaining approval-rule settings and
+    transactional saves. Review revisions use a model default or medium for unspecified
+    effort, resolve CLI-default models, retry failed model discovery, keep learning writes
+    out of coding-turn outcomes, and identify blocked receipts. Settings reports untested
+    drafts and recoverable status failures, with shared judge identity checks. Evidence:
+    [initial review](reviews/2026-10-01-jev-settings-review.md) and
+    [review revisions](reviews/2026-10-02-pr51-review-revisions.md).
   - #60 (rename diffs in Changes), #61 (early `runner.send` rejections reach `thread:send`),
     #62 (`worktree.sh` falls back to the local `origin/main` when offline). These are fork
     PRs, so their CI runs wait for a maintainer's approval.

@@ -41,6 +41,21 @@ function effortIndex(e: string | undefined): number | undefined {
   return i < 0 ? undefined : i;
 }
 
+function currentCandidate(input: DecisionInput): Candidate | undefined {
+  return (input.ladders[input.current.backend] ?? []).find((c) => input.current.model ? c.model === input.current.model : c.isDefault);
+}
+
+function effortCeiling(input: DecisionInput, reasons: string[]): number | undefined {
+  const configured = effortIndex(input.policy.max_effort);
+  if (configured === undefined) return undefined;
+  const high = effortIndex("high")!;
+  if (input.premiumExhausted && configured > high) {
+    reasons.push("Daily premium-turn budget used up → capped at high reasoning effort.");
+    return high;
+  }
+  return configured;
+}
+
 /** Nearest known supported effort to the request that stays at or below the active ceiling. */
 function fitEffort(candidate: Candidate, wanted: EffortLevel, cap: EffortLevel): EffortLevel | undefined {
   const desired = effortIndex(wanted)!;
@@ -55,20 +70,15 @@ function fitEffort(candidate: Candidate, wanted: EffortLevel, cap: EffortLevel):
 function blocked(input: DecisionInput, reasons: string[], detail: string): Decision {
   return {
     backend: input.current.backend, model: input.current.model, effort: undefined, fast: false,
-    tier: (input.ladders[input.current.backend] ?? []).find((c) => c.model === input.current.model)?.tier ?? 2,
+    tier: currentCandidate(input)?.tier ?? 2,
     pinned: true, blocked: true, reasons: [...reasons, detail],
   };
 }
 
-function pinnedEffort(input: DecisionInput, candidate: Candidate | undefined, reasons: string[]): EffortLevel | null | undefined {
+function pinnedEffort(input: DecisionInput, candidate: Candidate | undefined, cap: number | undefined): EffortLevel | null | undefined {
   // The offline scripted backend has no reasoning-effort setting or hidden provider default.
   if (input.current.backend === "mock") return null;
-  const configuredCap = effortIndex(input.policy.max_effort);
-  if (configuredCap === undefined) return undefined;
-  const cap = input.premiumExhausted ? Math.min(configuredCap, effortIndex("high")!) : configuredCap;
-  if (input.premiumExhausted && configuredCap > effortIndex("high")!) {
-    reasons.push("Daily premium-turn budget used up → capped at high reasoning effort.");
-  }
+  if (cap === undefined) return undefined;
   const requested = effortIndex(input.current.effort);
   // A persisted effort is only safe when the live catalogue confirms that the current model
   // accepts it. Otherwise the CLI may ignore the setting and use an unknown, higher default.
@@ -77,25 +87,33 @@ function pinnedEffort(input: DecisionInput, candidate: Candidate | undefined, re
   if (requested !== undefined && requested <= cap && candidate.efforts.includes(input.current.effort!)) {
     return input.current.effort as EffortLevel;
   }
-  const target = EFFORTS[Math.min(requested ?? cap, cap)]!;
+  const target = EFFORTS[Math.min(requested ?? effortIndex(candidate.defaultEffort) ?? effortIndex("medium")!, cap)]!;
   return fitEffort(candidate, target, EFFORTS[cap]!);
+}
+
+function keepCurrent(input: DecisionInput, candidate: Candidate | undefined, reasons: string[]): Decision {
+  if (input.premiumExhausted && candidate?.tier === 3) return blocked(input, reasons, "The daily premium-turn budget is spent and the current model is top tier; the route was stopped.");
+  const effort = pinnedEffort(input, candidate, effortCeiling(input, reasons));
+  if (effort === undefined) return blocked(input, reasons, `Cannot honor the ${input.policy.max_effort} reasoning-effort ceiling for the current model because its supported efforts are unavailable or exceed the ceiling; the route was stopped.`);
+  if (effort && effort !== input.current.effort) {
+    reasons.push(input.current.effort
+      ? `Adjusted current effort to the supported ${effort} level within the ${input.policy.max_effort} ceiling.`
+      : `No effort requested; using ${effort} within the ${input.policy.max_effort} ceiling.`);
+  }
+  return { backend: input.current.backend, model: input.current.model, effort: effort ?? undefined, fast: false, tier: candidate?.tier ?? 2, pinned: true, reasons };
 }
 
 export function decide(input: DecisionInput): Decision {
   const { judgments: j, policy, current } = input;
   const reasons: string[] = [];
   const currentLadder = input.ladders[current.backend] ?? [];
-  const currentCandidate = currentLadder.find((c) => c.model === current.model);
+  const candidateNow = currentCandidate(input);
   const label = (c: Candidate | undefined) => (c ? c.label : current.model || "the CLI default");
 
   // 1. Confidence gate: a calibrated judge that is unsure keeps whatever the user last chose.
   if (input.source === "jev" && j.taskConfidence < policy.min_confidence) {
-    reasons.push(`Jev was unsure what kind of task this is (${j.taskConfidence.toFixed(2)} < ${policy.min_confidence}); kept ${label(currentCandidate)}.`);
-    if (input.premiumExhausted && currentCandidate?.tier === 3) return blocked(input, reasons, "The daily premium-turn budget is spent and the pinned model is top tier; the route was stopped.");
-    const effort = pinnedEffort(input, currentCandidate, reasons);
-    if (effort === undefined) return blocked(input, reasons, `Cannot honor the ${policy.max_effort} reasoning-effort ceiling for the current model; the route was stopped.`);
-    if (effort && effort !== current.effort) reasons.push(`Current effort is above or unsupported under the ${policy.max_effort} ceiling; lowered to ${effort}.`);
-    return { backend: current.backend, model: current.model, effort: effort ?? undefined, fast: false, tier: currentCandidate?.tier ?? 2, pinned: true, reasons };
+    reasons.push(`Jev was unsure what kind of task this is (${j.taskConfidence.toFixed(2)} < ${policy.min_confidence}); kept ${label(candidateNow)}.`);
+    return keepCurrent(input, candidateNow, reasons);
   }
 
   // 2. Target tier from complexity, nudged by reasoning need, risk, posture, and what the user taught us.
@@ -131,11 +149,7 @@ export function decide(input: DecisionInput): Decision {
   const candidate = pick(rungs, target);
   if (!candidate) {
     reasons.push("No model list available; kept the current model.");
-    if (input.premiumExhausted && currentCandidate?.tier === 3) return blocked(input, reasons, "The daily premium-turn budget is spent and the current model is top tier; the route was stopped.");
-    const effort = pinnedEffort(input, currentCandidate, reasons);
-    if (effort === undefined) return blocked(input, reasons, `Cannot honor the ${policy.max_effort} reasoning-effort ceiling because the current model's effort capabilities are unavailable; the route was stopped.`);
-    if (effort && effort !== current.effort) reasons.push(`Current effort is above or unsupported under the ${policy.max_effort} ceiling; lowered to ${effort}.`);
-    return { backend: current.backend, model: current.model, effort: effort ?? undefined, fast: false, tier: target, pinned: true, reasons };
+    return keepCurrent(input, candidateNow, reasons);
   }
   if (input.premiumExhausted && candidate.tier === 3) return blocked(input, reasons, `The daily premium-turn budget is spent and ${candidate.label} is top tier; the route was stopped.`);
   if (candidate.tier < target) reasons.push(`No tier-${target} model on ${backend}; using the highest available (${candidate.label}).`);
@@ -145,15 +159,9 @@ export function decide(input: DecisionInput): Decision {
   let e = effortIndex(base[candidate.tier]!)!;
   if (j.needsDeepReasoning >= 0.7) e += 1;
   if (j.wantsSpeed >= 0.7 && j.needsDeepReasoning < 0.5) { e -= 1; reasons.push("You asked for speed → lower reasoning effort."); }
-  const configuredCap = effortIndex(policy.max_effort);
-  if (configuredCap === undefined) return blocked(input, reasons, "The configured reasoning-effort ceiling is unknown; the route was stopped.");
-  let cap = configuredCap;
-  if (e > cap) { e = cap; reasons.push(`Effort capped at ${policy.max_effort} by your limit.`); }
-  if (input.premiumExhausted && cap > effortIndex("high")!) {
-    cap = effortIndex("high")!;
-    if (e > cap) e = cap;
-    reasons.push("Daily premium-turn budget used up → capped at high reasoning effort.");
-  }
+  const cap = effortCeiling(input, reasons);
+  if (cap === undefined) return blocked(input, reasons, "The configured reasoning-effort ceiling is unknown; the route was stopped.");
+  if (e > cap) { e = cap; reasons.push(`Effort capped at ${EFFORTS[cap]} by your limit.`); }
   const wanted = EFFORTS[Math.max(0, Math.min(EFFORTS.length - 1, e))]!;
   const effort = fitEffort(candidate, wanted, EFFORTS[cap]!);
   if (!effort && candidate.backend !== "mock") {

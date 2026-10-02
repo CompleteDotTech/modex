@@ -59,6 +59,32 @@ test("failed settings persistence does not invalidate the active router setup", 
   assert.equal(resets, 0);
 });
 
+test("routing saves preserve approval rules and persist approval changes transactionally", () => {
+  const home = tmpdir("modex-settings-approval-rebase-");
+  const store = new Store(home);
+  const router = { reset: () => {} };
+  updateSettings(store, router, {
+    approval_rules: [{ id: "tests", when: " run tests ", decision: "allow", enabled: true }],
+    approval_gate: { enabled: true, threshold: 0.9, timeout_ms: 2500 },
+    routing: { ...store.settings.routing, jev_transport: "http" },
+  });
+  updateSettings(store, router, { routing: { ...store.settings.routing, posture: "economy" } });
+  const before = store.settings;
+  assert.equal(before.approval_rules[0]?.when, "run tests", "approval migrations remain active");
+  assert.deepEqual(new Store(home).settings, before);
+  const blocker = path.join(home, "app", "state.json.tmp");
+  fs.mkdirSync(blocker);
+  assert.throws(() => updateSettings(store, router, {
+    approval_rules: [], approval_gate: { ...before.approval_gate, enabled: false },
+  }));
+  assert.deepEqual(store.settings, before, "failed writes cannot publish approval drafts in memory");
+  assert.deepEqual(new Store(home).settings, before);
+  fs.rmSync(blocker, { recursive: true });
+  updateSettings(store, router, { approval_rules: [], approval_gate: { ...before.approval_gate, enabled: false } });
+  assert.deepEqual(new Store(home).settings.approval_rules, []);
+  assert.equal(new Store(home).settings.approval_gate.enabled, false);
+});
+
 test("a real state-file write failure keeps settings and explicit router health unchanged, then permits retry", async () => {
   const home = tmpdir("modex-settings-write-failure-");
   const store = new Store(home);
