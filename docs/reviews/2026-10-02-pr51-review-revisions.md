@@ -102,3 +102,7 @@ again requires the complete hosted macOS check, recorded on the PR before merge.
 The combined build, all 13 Git tests (including four new rename-diff cases), and the focused
 Electron send/approve/Changes test passed locally. An isolated offline helper smoke test
 also confirmed cached-ref worktree creation and removal with an unavailable remote.
+The normal full unit command then passed core 15/15 and desktop 180/180, with no skips.
+The documentation-only main update `1c3ec6f` (#67) was reconciled afterward: its status
+entries and known rename-diff follow-ups are retained, #51 is recorded as landed, and
+duplicate entries are removed. No executable code or tests changed in that reconciliation.
