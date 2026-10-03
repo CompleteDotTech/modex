@@ -47,6 +47,10 @@ the `Release` workflow, behind the `release-signing` reviewer → GitHub release
 
 ## In flight
 
+- **App-owned ChatGPT sign-in (#76).** [Design and recovery](chatgpt-signin.md) cover
+  OAuth, protected storage, account-isolated Codex processes and identity-bound resumes.
+  Real interactive macOS acceptance remains the landing gate.
+
 - **Provider feasibility (#78/#79).** [Gemini](gemini-feasibility.md) and
   [Grok](grok-feasibility.md) have conditional CLI/ACP integration decisions backed by
   installed-version initialization probes. Neither is enabled. Read-only permission,

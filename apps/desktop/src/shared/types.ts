@@ -37,6 +37,8 @@ export interface Thread {
   auto?: boolean;
   /** Backend resume handle: Claude session id or Codex thread id. */
   sessionHandle?: string;
+  /** Opaque identity binding; never credentials. Older Codex handles belong to CLI auth. */
+  codexAccount?: string;
   status: ThreadStatus;
 }
 
@@ -279,6 +281,12 @@ export interface BackendHealth {
   detail: string;
 }
 
+export interface ChatGPTStatus {
+  available: boolean; active: string | null; signingIn: boolean;
+  accounts: { id: string; label: string; registration: string; signedIn: boolean; planEnabled: boolean }[];
+  detail: string;
+}
+
 export interface BridgeCommands {
   "state:get": { req: undefined; res: AppState };
   "project:add": { req: { path?: string } | undefined; res: Project | null };
@@ -299,6 +307,11 @@ export interface BridgeCommands {
   "routing:test": { req: undefined; res: RoutingTest };
   "models:list": { req: { backend: BackendId }; res: { models: ModelInfo[]; error?: string } };
   "backends:health": { req: undefined; res: Record<BackendId, BackendHealth> };
+  "chatgpt:status": { req: undefined; res: ChatGPTStatus };
+  "chatgpt:signIn": { req: { accountId?: string }; res: ChatGPTStatus };
+  "chatgpt:cancel": { req: undefined; res: void };
+  "chatgpt:select": { req: { accountId: string | null }; res: ChatGPTStatus };
+  "chatgpt:signOut": { req: { accountId: string }; res: { status: ChatGPTStatus; detail: string } };
   "thread:delete": { req: { threadId: string; removeWorktree?: boolean }; res: AppState };
   /** A project checkout's current branch, for a draft's context strip; null outside a git repository. */
   "project:branch": { req: { projectId: string }; res: string | null };

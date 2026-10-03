@@ -14,6 +14,9 @@ test("static models never make a missing Claude executable ready", async () => {
   try {
     await tid(page, "open-settings").click();
     await page.getByRole("button", { name: "Coding CLIs", exact: true }).click();
+    await expect(tid(page, "chatgpt-accounts")).toContainText("Existing conversations keep their original account");
+    await expect(page.getByRole("button", { name: "Continue with ChatGPT", exact: true })).toBeVisible();
+    await expect(page.getByLabel("Active account for new Codex conversations")).toHaveValue("");
     await expect(page.getByText("CLI not found", { exact: true })).toHaveCount(2);
     await expect(page.getByText(/^ready ·/)).toHaveCount(0);
     await page.getByLabel("Claude executable").fill("another-cli");
