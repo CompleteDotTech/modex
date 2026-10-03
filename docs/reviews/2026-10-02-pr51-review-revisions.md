@@ -85,3 +85,11 @@ merge; final validation is recorded on the PR.
 
 All provider behavior was exercised with offline fixtures. Automated keyboard and layout
 checks do not claim human keyboard-only or VoiceOver acceptance, nor live-provider health.
+
+Before landing, main advanced to `95e7459` (#61). Its send-error IPC and regression tests
+merged without conflicts, preserving both immediate send-error propagation and #51's
+transactional settings update. The synchronized head must pass a fresh required macOS
+check; the earlier green check and approval are not sufficient for that new head.
+The combined build and core 15/15 passed locally. Desktop passed 172/176, including the
+new busy-send case and all routing/settings regressions; the four failures were in the
+unchanged terminal-cleanup tests. Their assertions and deadlines remain unchanged.

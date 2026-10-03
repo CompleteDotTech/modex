@@ -29,6 +29,8 @@ release with `SHA256SUMS.txt`) is spelled out in the v0.0.3 review.
   also repair CLI-default routing, discovery retries, learning-write failures, and blocked
   receipts. Evidence: [issue review](reviews/2026-10-01-jev-settings-review.md) and
   [maintainer review](reviews/2026-10-02-pr51-review-revisions.md).
+- **Early send errors reach the caller** (#61). Busy-thread and other immediate launch
+  rejections return an IPC error; failures after launch remain transcript notices.
 - **Signed and notarized macOS builds** (`notarize`, 2026-10-01). Developer ID signature,
   hardened runtime with library validation kept on, notarized and stapled, verified by
   `scripts/release-mac.sh`, which also runs in the new `Release` workflow on a `v*` tag and
@@ -59,8 +61,8 @@ release with `SHA256SUMS.txt`) is spelled out in the v0.0.3 review.
   By default a new rule covers the current project, and rules that need Jev show as inactive
   without it rather than being hidden.
 - **Open contributor PRs.**
-  - #60 (rename diffs in Changes), #61 (early `runner.send` rejections reach `thread:send`),
-    #62 (`worktree.sh` falls back to the local `origin/main` when offline). These are fork
+  - #60 (rename diffs in Changes), #62 (`worktree.sh` falls back to the local `origin/main`
+    when offline). These are fork
     PRs, so their CI runs wait for a maintainer's approval.
   - #39: logo, banner and icon concepts under `docs/branding/`, placed in the README. It may
     supply the app icon for v0.0.5.
