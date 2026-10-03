@@ -28,6 +28,10 @@ Nothing yet.
 
 ## In flight
 
+- **Account readiness (#75).** Settings now checks CLI availability and structured account
+  status separately from model catalogues. Authentication does not imply model entitlement;
+  status checks do not run a coding turn. Older or unresponsive CLIs report unknown status.
+
 - **Approval rules (Jev-gated).** Part 1 (#54) merged with the gate off and no UI: every
   backend's approval request carries an action, `engine/approvals/digest.ts` builds the
   scrubbed state Jev sees, and `engine/approvals/gate.ts` decides allow, ask or never. Part 2
