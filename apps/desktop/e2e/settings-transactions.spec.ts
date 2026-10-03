@@ -165,7 +165,9 @@ test("a saved setting remains visible on reopen when the full-state refresh fail
   await tid(page, "open-settings").click();
   const dialog = tid(page, "settings");
   await dialog.getByRole("button", { name: "General" }).click();
-  await dialog.getByRole("combobox", { name: "Default mode for new threads" }).selectOption("chat");
+  const mode = dialog.getByRole("combobox", { name: "Default mode for new threads" });
+  await expect(mode).toHaveValue("chat");
+  await mode.selectOption("agent");
   await app.evaluate(({ ipcMain }) => {
     ipcMain.removeHandler("state:get");
     ipcMain.handle("state:get", async () => { throw new Error("fake refresh failure after save"); });
@@ -177,7 +179,7 @@ test("a saved setting remains visible on reopen when the full-state refresh fail
   await tid(page, "open-settings").click();
   const reopened = tid(page, "settings");
   await reopened.getByRole("button", { name: "General" }).click();
-  await expect(reopened.getByRole("combobox", { name: "Default mode for new threads" })).toHaveValue("chat");
+  await expect(reopened.getByRole("combobox", { name: "Default mode for new threads" })).toHaveValue("agent");
   await reopened.getByRole("button", { name: "Cancel" }).click();
 });
 

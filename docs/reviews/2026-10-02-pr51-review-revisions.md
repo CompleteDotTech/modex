@@ -54,3 +54,34 @@ Ignored local logs are under `apps/desktop/.probes/` in `jev-review51`; unchange
 logs are in the same directory of the separate `jev-review51-baseline` worktree.
 If the learning file cannot be written, session counts remain effective, but that new
 learning cannot survive an app restart until a later write succeeds.
+
+## Maintainer follow-up, 2026-10-03
+
+Rechecked incoming head `6e31c6a` against every acceptance criterion in issues #40–#50,
+all eleven findings in BunsDev's review, and its four smaller cleanups. The source and
+regression coverage address the transport, setup invalidation, session-consent and effort
+limits; the Settings transaction, status, accessibility and advanced-control paths; and
+the default-model, discovery, learning and receipt corrections. The merge from current
+main retains approval-rule migrations and transactional persistence. There were no inline
+review threads to resolve.
+
+One verification gap remained: the refresh-failure test saved `chat` over a fixture already
+set to `chat`, so a stale renderer snapshot could pass. It now checks the initial value,
+saves `agent`, and requires `agent` after reopening. The corrected test passed with the
+implementation, then failed at the expected `agent`/`chat` assertion when the saved-state
+update was temporarily removed. The production source was restored without changes.
+
+The first macOS unit run passed core 15/15 and desktop 174/175. The unchanged terminal test
+`supervisor death seen as a failed CLOSE write still reports a missing cleanup receipt`
+failed its SIGKILL observation under a machine load average of 129; its complete nine-test
+file then passed unchanged. A second parallel run hit the unchanged cleanup-retry timeout.
+All 175 desktop tests then passed with `node --test --test-concurrency=1 'dist/test/**/*.test.js'`;
+core 15/15, build and typecheck also passed. No assertion or timeout was changed. The local
+Electron run timed out during `app.close()` in the unchanged window-persistence test.
+The [required hosted macOS check](https://github.com/TypeSafeAI/modex/actions/runs/37035528962)
+passed on incoming head `6e31c6a`, including the normal unit and complete Electron commands.
+The follow-up test/documentation commit still requires its own green hosted check before
+merge; final validation is recorded on the PR.
+
+All provider behavior was exercised with offline fixtures. Automated keyboard and layout
+checks do not claim human keyboard-only or VoiceOver acceptance, nor live-provider health.
