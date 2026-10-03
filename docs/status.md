@@ -22,6 +22,13 @@ release with `SHA256SUMS.txt`) is spelled out in the v0.0.3 review.
 
 ## On `main`, not yet released
 
+- **Jev settings and routing limits** (#51). CLI-only transport is enforced, relevant saves
+  refresh judge setup, existing sessions keep their backend, and effort and premium limits
+  stop unsafe Auto routes before execution. Settings separates drafts from immediate actions,
+  identifies explicit test results, and preserves failed saves for retry. Review revisions
+  also repair CLI-default routing, discovery retries, learning-write failures, and blocked
+  receipts. Evidence: [issue review](reviews/2026-10-01-jev-settings-review.md) and
+  [maintainer review](reviews/2026-10-02-pr51-review-revisions.md).
 - **Signed and notarized macOS builds** (`notarize`, 2026-10-01). Developer ID signature,
   hardened runtime with library validation kept on, notarized and stapled, verified by
   `scripts/release-mac.sh`, which also runs in the new `Release` workflow on a `v*` tag and
@@ -65,14 +72,11 @@ release with `SHA256SUMS.txt`) is spelled out in the v0.0.3 review.
   scrubbed state Jev sees, and `engine/approvals/gate.ts` decides allow, ask or never. Part 2
   adds Settings → Approval rules with a "Try it" box, receipts on approval cards, the
   `(rule: …)` deny reason, `e2e/approvals.spec.ts`, and the docs, then turns the gate on. It
-  targets v0.0.6 and merges only after the v0.0.5 tag. Its Settings UI builds on #51, so it
-  waits for #51 to land. Receipts, the deny reason and the docs can start now. The spec
+  targets v0.0.6 and merges only after the v0.0.5 tag. Its Settings UI builds on #51.
+  Receipts, the deny reason and the docs can start now. The spec
   (`2026-10-01-modex-jev-approval-rules-spec.md`, named in #54) records the part 2 decisions.
   By default a new rule covers the current project, and rules that need Jev show as inactive
   without it rather than being hidden.
-- **Open contributor PRs.**
-  - #51 `jev-integration`: Jev settings, routing limits, and settings save transactions.
-    It conflicts with `main` and needs a rebase before review.
 - **Worktrees with no PR yet.** Each should become a PR or be deleted.
   - `auth-retry` (uncommitted): a failed turn ends in a card with Retry, a fix and Copy
     details. When Codex's sign-in goes stale, Modex restarts `codex app-server` and retries.
