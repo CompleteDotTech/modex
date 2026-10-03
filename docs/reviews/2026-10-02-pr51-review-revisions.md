@@ -93,3 +93,12 @@ check; the earlier green check and approval are not sufficient for that new head
 The combined build and core 15/15 passed locally. Desktop passed 172/176, including the
 new busy-send case and all routing/settings regressions; the four failures were in the
 unchanged terminal-cleanup tests. Their assertions and deadlines remain unchanged.
+
+The synchronized head `eec32fc` passed its [required hosted macOS check](https://github.com/TypeSafeAI/modex/actions/runs/37138476973):
+core 15/15, desktop 176/176 and Electron 75/75, with no skips. Main then advanced through
+#60's rename diffs and #62's offline worktree helper to `ef081ff`. Both merged without
+conflicts; they do not change Jev routing or Settings transactions. The final combined head
+again requires the complete hosted macOS check, recorded on the PR before merge.
+The combined build, all 13 Git tests (including four new rename-diff cases), and the focused
+Electron send/approve/Changes test passed locally. An isolated offline helper smoke test
+also confirmed cached-ref worktree creation and removal with an unavailable remote.
