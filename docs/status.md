@@ -24,7 +24,9 @@ the `Release` workflow, behind the `release-signing` reviewer → GitHub release
 
 ## On `main`, not yet released
 
-Nothing yet.
+- **Panel layout (#74).** Hiding the sidebar keeps the draft and thread centered in the
+  remaining main pane. Optional sidebar and Changes panes have fixed grid positions;
+  geometry e2e checks cover toggles, narrower windows, relaunch, and the open terminal.
 
 ## In flight
 
