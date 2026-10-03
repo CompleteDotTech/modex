@@ -47,6 +47,10 @@ the `Release` workflow, behind the `release-signing` reviewer → GitHub release
 
 ## In flight
 
+- **Claude sign-in (#77).** Settings launches the saved Claude CLI's browser login,
+  cancels its own attempt, and verifies structured account status afterward.
+  Credentials remain CLI-owned. Real interactive acceptance remains a landing gate.
+
 - **Provider feasibility (#78/#79).** [Gemini](gemini-feasibility.md) and
   [Grok](grok-feasibility.md) have conditional CLI/ACP integration decisions backed by
   installed-version initialization probes. Neither is enabled. Read-only permission,

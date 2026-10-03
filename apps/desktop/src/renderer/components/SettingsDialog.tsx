@@ -64,6 +64,9 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
   const [health, setHealth] = useState<Record<BackendId, BackendHealth> | null>(null);
   const [healthFailed, setHealthFailed] = useState(false);
   const [healthRevision, setHealthRevision] = useState(0);
+  const [claudeLoginBusy, setClaudeLoginBusy] = useState(false);
+  const [claudeLoginDetail, setClaudeLoginDetail] = useState("");
+  const claudeLoginRef = useRef(false);
   const [lists, setLists] = useState<Partial<Record<BackendId, { models: ModelInfo[]; error?: string }>>>({});
   const [routing, setRouting] = useState<RoutingStatus | null>(null);
   const [routingError, setRoutingError] = useState<string | null>(null);
@@ -271,6 +274,18 @@ export function SettingsDialog({ settings, onSave, onClose }: Props) {
         </section>}
         {section === "clis" && <section id="settings-clis" aria-labelledby="settings-clis-title" className="settings-section">
           <h3 id="settings-clis-title">Coding CLIs</h3>
+          <button type="button" disabled={claudeLoginBusy || s.claude_bin !== settings.claude_bin} onClick={async () => {
+            if (claudeLoginRef.current) return;
+            claudeLoginRef.current = true;
+            setClaudeLoginBusy(true);
+            setClaudeLoginDetail("Waiting for Claude Code sign-in. Complete the browser flow; opening the browser does not confirm login.");
+            try { const result = await bridge.invoke("claude:login", undefined); setClaudeLoginDetail(result.detail); }
+            catch { setClaudeLoginDetail("Could not start Claude sign-in. Check the configured executable."); }
+            finally { claudeLoginRef.current = false; setClaudeLoginBusy(false); setHealthRevision((revision) => revision + 1); }
+          }}>Sign in to Claude Code</button>
+          {claudeLoginBusy && <button type="button" onClick={() => { void bridge.invoke("claude:cancelLogin", undefined); }}>Cancel sign-in</button>}
+          <p role="status">{claudeLoginDetail}</p>
+          <p className="hint">Sign-in applies immediately to the saved CLI path and is shared with other Claude Code clients. It remains applied if you cancel Settings. Claude owns credentials; API or enterprise configuration may take precedence. For manual-input recovery, run claude auth login in your terminal. No logout or account-switch action is provided.</p>
           <button type="button" onClick={() => setHealthRevision((revision) => revision + 1)}>Refresh account status</button>
           <p className="hint">Checks the saved executable paths used by this app session. Model catalogues do not confirm account access. Path changes require a restart.</p>
         <div className="grid2">

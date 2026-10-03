@@ -38,9 +38,10 @@ export class ClaudeBackend implements Backend {
     const result = await probe(this.bin, ["auth", "status"], this.spawnImpl);
     if (result.failure) return report("failed", result.failure === "timeout" ? "Account check timed out" : "Account check failed");
     try {
-      const account = JSON.parse(result.output) as { loggedIn?: unknown };
-      // The CLI documents exit 0 for signed in and 1 for signed out; conflicting signals stay unknown.
-      if (account.loggedIn === true && result.code === 0) return report("authenticated", "Signed in · model access unverified");
+      const account = JSON.parse(result.output) as { loggedIn?: unknown; authMethod?: unknown };
+      const source = account.authMethod === "claude.ai" ? "Claude subscription" : ["api_key", "api_key_helper"].includes(String(account.authMethod)) ? "API credentials" : account.authMethod === "third_party" ? "Third-party provider" : "CLI account";
+      // Retain main's exit-code checks and CLI version reporting.
+      if (account.loggedIn === true && result.code === 0) return report("authenticated", `Signed in · ${source} · model access unverified`);
       if (account.loggedIn === false && result.code === 1) return report("signed-out", "Signed out · run claude auth login");
     } catch { /* Older CLIs do not provide structured account status. */ }
     return report("unknown", "Account status unavailable · check in Claude CLI");

@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Store } from "./engine/store.js";
 import { updateSettings } from "./engine/settings-update.js";
 import { ThreadRunner } from "./engine/runner.js";
+import { ClaudeLogin } from "./engine/claude-login.js";
 import * as gitx from "./engine/git.js";
 import { runDemo } from "./engine/demo.js";
 import { openTerminal } from "./engine/open-terminal.js";
@@ -152,6 +153,11 @@ handle("changes:revert", async ({ threadId, path: rel }) => {
 });
 handle("settings:update", (patch) => updateSettings(store, runner.router, patch));
 handle("models:list", ({ backend }) => runner.listModels(backend));
+const claudeLogin = new ClaudeLogin();
+const sessionClaudeBin = store.settings.claude_bin;
+SPAWNS.add("claude:login");
+handle("claude:login", () => claudeLogin.run(sessionClaudeBin));
+handle("claude:cancelLogin", () => claudeLogin.cancel());
 handle("routing:status", () => runner.router.status());
 handle("routing:reset", () => {
   runner.router.fit.reset();
@@ -253,6 +259,7 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin" || screenshotDir) app.quit();
 });
 app.on("before-quit", (event) => {
+  claudeLogin.cancel();
   if (shutdownComplete) return;
   event.preventDefault();
   if (shuttingDown) return;

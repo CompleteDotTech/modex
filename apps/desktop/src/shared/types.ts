@@ -279,6 +279,11 @@ export interface BackendHealth {
   detail: string;
 }
 
+export interface ClaudeLoginResult {
+  status: "authenticated" | "busy" | "unsupported" | "failed" | "timeout" | "cancelled";
+  detail: string;
+}
+
 export interface BridgeCommands {
   "state:get": { req: undefined; res: AppState };
   "project:add": { req: { path?: string } | undefined; res: Project | null };
@@ -299,6 +304,8 @@ export interface BridgeCommands {
   "routing:test": { req: undefined; res: RoutingTest };
   "models:list": { req: { backend: BackendId }; res: { models: ModelInfo[]; error?: string } };
   "backends:health": { req: undefined; res: Record<BackendId, BackendHealth> };
+  "claude:login": { req: undefined; res: ClaudeLoginResult };
+  "claude:cancelLogin": { req: undefined; res: void };
   "thread:delete": { req: { threadId: string; removeWorktree?: boolean }; res: AppState };
   /** A project checkout's current branch, for a draft's context strip; null outside a git repository. */
   "project:branch": { req: { projectId: string }; res: string | null };
