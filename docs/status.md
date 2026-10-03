@@ -31,8 +31,14 @@ the `Release` workflow, behind the `release-signing` reviewer → GitHub release
   before a repository's first commit (#72).
 - The terminal cleanup EPIPE test now drains its fixture's PTY output before blocking the
   event loop and reports the supervisor's process state if `SIGKILL` still stalls (#64).
+- The cleanup-timeout fixture waits for its supervisor to enter the stopped state before
+  calling Close. This removes a signal-delivery race seen on macOS CI without changing the
+  product timeout.
 - Rename diffs handle a rewritten destination beginning with `-`; Git failures now appear
   as errors in Changes rather than as empty diffs (#60).
+- Changes in a project opened at a Git repository subdirectory stay within that project:
+  displayed paths are project-relative, untracked lines count correctly, and discard uses
+  repository-relative Git paths without touching sibling workspaces (#99).
 - The desktop shell uses a cooler graphite palette with clearer secondary text and subtle
   depth across navigation, transcript, and composer. The follow-up suggestion no longer
   overlaps the composer placeholder. Offline screenshot capture uses an isolated heuristic
@@ -44,6 +50,9 @@ the `Release` workflow, behind the `release-signing` reviewer → GitHub release
 - **Account readiness (#75).** Settings checks CLI availability and structured account status
   separately from model catalogues. Authentication does not imply model entitlement; status
   checks do not run a coding turn. Older or unresponsive CLIs report unknown status.
+- **Livestream privacy.** Streamer Mode persistently covers the whole window, hiding chats,
+  names, paths, terminals, diffs, dialogs, and notices while work continues. An Electron e2e
+  checks full viewport coverage, persistence, and explicit reveal.
 
 ## In flight
 
@@ -71,8 +80,6 @@ the `Release` workflow, behind the `release-signing` reviewer → GitHub release
     details. When Codex's sign-in goes stale, Modex restarts `codex app-server` and retries.
   - `pr-review-browser` (uncommitted): runs the renderer in a browser, connected to the real
     engine over a localhost bridge.
-  - `livestream-redaction` (one unpushed commit, 2026-09-29): Streamer Mode, an opaque cover
-    over chats, paths, terminals and diffs while work continues underneath.
 
 ## Known rough edges
 
@@ -90,14 +97,6 @@ the `Release` workflow, behind the `release-signing` reviewer → GitHub release
   refused, but it does consume one small model call per new thread on Claude and Codex.
 - **Title quality and Jev's follow-up picks are unproven by the suite.** The mock backend does
   not name threads and e2e runs without a key; only the heuristic path is exercised.
-- **The cleanup-timeout test failed once on CI, cause unknown.** *cleanup timeout retains
-  ownership and a later close can retry* (`test/terminal-cleanup.test.ts`) failed on #63, a
-  docs-only change: the supervisor it froze with `SIGSTOP` was gone, exited and reaped, within
-  56 ms. It has not reproduced locally in over 1,300 attempts on macOS 26, including runs under
-  CPU load and alongside the full suite. The test now reports how `close()` settled and the
-  supervisor's exit instead of failing on its `SIGCONT` cleanup. If it fails again, exit code
-  143 means the `SIGSTOP` never held, signal 9 that something killed the supervisor, and 125
-  that it failed at startup.
 
 ## Next
 
