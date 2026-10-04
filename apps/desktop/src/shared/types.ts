@@ -287,6 +287,11 @@ export interface ChatGPTStatus {
   detail: string;
 }
 
+export interface ClaudeLoginResult {
+  status: "authenticated" | "busy" | "unsupported" | "failed" | "timeout" | "cancelled";
+  detail: string;
+}
+
 export interface BridgeCommands {
   "state:get": { req: undefined; res: AppState };
   "project:add": { req: { path?: string } | undefined; res: Project | null };
@@ -312,6 +317,8 @@ export interface BridgeCommands {
   "chatgpt:cancel": { req: undefined; res: void };
   "chatgpt:select": { req: { accountId: string | null }; res: ChatGPTStatus };
   "chatgpt:signOut": { req: { accountId: string }; res: { status: ChatGPTStatus; detail: string } };
+  "claude:login": { req: undefined; res: ClaudeLoginResult };
+  "claude:cancelLogin": { req: undefined; res: void };
   "thread:delete": { req: { threadId: string; removeWorktree?: boolean }; res: AppState };
   /** A project checkout's current branch, for a draft's context strip; null outside a git repository. */
   "project:branch": { req: { projectId: string }; res: string | null };

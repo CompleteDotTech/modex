@@ -8,6 +8,7 @@ import { updateSettings } from "./engine/settings-update.js";
 import { ThreadRunner } from "./engine/runner.js";
 import { ChatGPTAuth } from "./engine/chatgpt-auth.js";
 import { AccountCodexBackend } from "./engine/backends/account-codex.js";
+import { ClaudeLogin } from "./engine/claude-login.js";
 import * as gitx from "./engine/git.js";
 import { runDemo } from "./engine/demo.js";
 import { openTerminal } from "./engine/open-terminal.js";
@@ -172,6 +173,11 @@ handle("chatgpt:select", ({ accountId }) => { chatgpt.select(accountId); return 
 handle("chatgpt:signOut", async ({ accountId }) => {
   const detail = await accountCodex.accountChange(accountId, () => chatgpt.signOut(accountId)); return { status: chatgpt.status(), detail };
 });
+const claudeLogin = new ClaudeLogin();
+const sessionClaudeBin = store.settings.claude_bin;
+SPAWNS.add("claude:login");
+handle("claude:login", () => claudeLogin.run(sessionClaudeBin));
+handle("claude:cancelLogin", () => claudeLogin.cancel());
 handle("routing:status", () => runner.router.status());
 handle("routing:reset", () => {
   runner.router.fit.reset();
@@ -274,6 +280,7 @@ app.on("window-all-closed", () => {
 });
 app.on("before-quit", (event) => {
   chatgpt.cancel();
+  claudeLogin.cancel();
   if (shutdownComplete) return;
   event.preventDefault();
   if (shuttingDown) return;

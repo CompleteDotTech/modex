@@ -19,6 +19,8 @@ test("static models never make a missing Claude executable ready", async () => {
     await expect(page.getByLabel("Active account for new Codex conversations")).toHaveValue("");
     await expect(page.getByText("CLI not found", { exact: true })).toHaveCount(2);
     await expect(page.getByText(/^ready ·/)).toHaveCount(0);
+    await page.getByRole("button", { name: "Sign in to Claude Code", exact: true }).click();
+    await expect(page.getByRole("status")).toContainText("Account commands unavailable");
     await page.getByLabel("Claude executable").fill("another-cli");
     await expect(page.getByText("Path changed · save and restart to check", { exact: true })).toBeVisible();
   } finally {
