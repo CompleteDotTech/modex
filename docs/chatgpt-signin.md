@@ -56,7 +56,13 @@ encryption, insufficient scopes, refresh serialization, local/remote sign-out an
 Codex child ownership. They do not establish a real OpenAI grant or subscription entitlement.
 Before landing: complete a real user-controlled new registration, returning authorization,
 Codex turn, refresh/resume, multi-account selection and sign-out on macOS Apple Silicon.
-The PR remains draft until that evidence is recorded. No existing CLI credential is imported.
+Apple Silicon acceptance completed on 2026-10-04: real registration and returning
+authorization, completed Codex turns, rotating refresh and process replacement,
+identity-bound resume, separate processes and tokens for two registrations, and scoped
+revocation all passed. The surviving registration completed another resumed turn after
+the other was revoked. Two distinct human account subjects were not established.
+The evidence is recorded in [PR #92](https://github.com/TypeSafeAI/modex/pull/92).
+No existing CLI credential is imported.
 
 Official contract sources, checked 2026-10-03:
 

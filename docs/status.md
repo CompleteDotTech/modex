@@ -60,7 +60,9 @@ the `Release` workflow, behind the `release-signing` reviewer → GitHub release
   OAuth, protected storage, account-isolated Codex processes and identity-bound resumes.
   Renewal preserves rotated credentials when plan scopes shrink and blocks execution;
   account labels require both plan execution scopes.
-  Real interactive macOS acceptance remains the landing gate.
+  Real Apple Silicon acceptance passed on 2026-10-04: registration, returning authorization,
+  completed Codex turns, rotating renewal, bound resumes, two-registration process isolation,
+  and scoped revocation. Evidence is recorded in PR #92; the change awaits merge.
 
 - **Provider feasibility (#78/#79).** [Gemini](gemini-feasibility.md) and
   [Grok](grok-feasibility.md) have conditional CLI/ACP integration decisions backed by
