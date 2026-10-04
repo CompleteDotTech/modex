@@ -16,7 +16,7 @@ function token(claims: Record<string, unknown>): string {
   const body = Buffer.from(JSON.stringify(claims)).toString("base64url");
   return `${header}.${body}.${sign("RSA-SHA256", Buffer.from(`${header}.${body}`), keys.privateKey).toString("base64url")}`;
 }
-function fixture(options: { claims?: Record<string, unknown>; scope?: string; failRevoke?: boolean; tamper?: boolean; browser?: (url: URL) => Promise<void> } = {}) {
+function fixture(options: { claims?: Record<string, unknown>; scope?: string; refreshScope?: string; failRevoke?: boolean; tamper?: boolean; browser?: (url: URL) => Promise<void> } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "modex-chatgpt-"));
   const storageKey = randomBytes(32);
   const cipher: Cipher = { name: "fixture AES-GCM", available: () => true,
@@ -35,7 +35,7 @@ function fixture(options: { claims?: Record<string, unknown>; scope?: string; fa
     else {
       const refresh = form.get("grant_type") === "refresh_token";
       if (refresh) { refreshCount++; await new Promise((resolve) => setTimeout(resolve, 10)); }
-      result = { access_token: refresh ? "ROTATED_SECRET" : "ACCESS_SECRET", refresh_token: refresh ? "ROTATED_REFRESH" : "REFRESH_SECRET", token_type: "Bearer", expires_in: 3600, scope: options.scope ?? scopes,
+      result = { access_token: refresh ? "ROTATED_SECRET" : "ACCESS_SECRET", refresh_token: refresh ? "ROTATED_REFRESH" : "REFRESH_SECRET", token_type: "Bearer", expires_in: 3600, scope: (refresh ? options.refreshScope : undefined) ?? options.scope ?? scopes,
         id_token: token({ iss: issuer, aud: form.get("client_id"), sub: "fixture-subject", email: "same@example.test", exp: Math.floor(now / 1000) + 3600, nonce: current.searchParams.get("nonce"), ...options.claims }) };
     }
     if (options.tamper && result && typeof result === "object" && "id_token" in result) {
@@ -154,6 +154,28 @@ test("concurrent consumers serialize rotating refresh and use issued client regi
     assert.equal(left.token, "ROTATED_SECRET"); assert.deepEqual(left, right); assert.equal(f.refreshCount(), 1);
     const refresh = f.requests.find((request) => request.form.get("grant_type") === "refresh_token")!;
     assert.equal(refresh.form.get("client_id"), "oaiapp_fixture"); assert.equal(refresh.form.has("scope"), false);
+  } finally { f.cleanup(); }
+});
+
+test("plan labels and execution both require resource.invoke", async () => {
+  const f = fixture({ scope: "openid profile email offline_access chatgpt.tokens.use.direct" });
+  try {
+    await f.auth.signIn();
+    assert.equal(f.auth.status().accounts[0]!.planEnabled, false);
+    await assert.rejects(f.auth.grant(f.auth.status().active!), /plan usage/);
+  } finally { f.cleanup(); }
+});
+
+test("reduced refresh permissions preserve rotation without allowing execution", async () => {
+  const f = fixture({ refreshScope: "openid profile email offline_access" });
+  try {
+    await f.auth.signIn(); const id = f.auth.status().active!; f.advance();
+    await assert.rejects(f.auth.grant(id), /permission is missing/);
+    assert.equal(f.auth.status().accounts[0]!.planEnabled, false);
+    await assert.rejects(f.auth.grant(id), /plan usage/);
+    assert.equal(f.refreshCount(), 1);
+    await f.auth.signOut(id);
+    assert.equal(f.requests.find((request) => request.url.endsWith("/revoke"))!.form.get("token"), "ROTATED_REFRESH");
   } finally { f.cleanup(); }
 });
 

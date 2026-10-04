@@ -58,6 +58,8 @@ the `Release` workflow, behind the `release-signing` reviewer → GitHub release
 
 - **App-owned ChatGPT sign-in (#76).** [Design and recovery](chatgpt-signin.md) cover
   OAuth, protected storage, account-isolated Codex processes and identity-bound resumes.
+  Renewal preserves rotated credentials when plan scopes shrink and blocks execution;
+  account labels require both plan execution scopes.
   Real interactive macOS acceptance remains the landing gate.
 
 - **Provider feasibility (#78/#79).** [Gemini](gemini-feasibility.md) and

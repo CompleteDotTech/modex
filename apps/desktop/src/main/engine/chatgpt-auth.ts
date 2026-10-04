@@ -81,7 +81,7 @@ export class ChatGPTAuth {
       const data = this.read();
       return {
         available: true, active: data.active, signingIn: this.attempt !== null,
-        accounts: data.registrations.map((r) => ({ id: r.id, label: r.email || "ChatGPT account", registration: r.clientId, signedIn: Boolean(r.refreshToken), planEnabled: r.scopes.includes("chatgpt.tokens.use.direct") && Boolean(r.refreshToken) })),
+        accounts: data.registrations.map((r) => ({ id: r.id, label: r.email || "ChatGPT account", registration: r.clientId, signedIn: Boolean(r.refreshToken), planEnabled: r.scopes.includes("chatgpt.tokens.use.direct") && r.scopes.includes("resource.invoke") && Boolean(r.refreshToken) })),
         detail: "Model access is unverified until a Codex turn completes.",
       };
     } catch { return { available: false, active: null, signingIn: false, accounts: [], detail: "Protected credential storage unavailable. Existing credentials were preserved." }; }
@@ -234,12 +234,15 @@ export class ChatGPTAuth {
       if (identity.sub !== record.subject) throw new Error("Refreshed account identity changed.");
     }
     const next = { ...record, ...this.credentials(tokens, record) };
-    if (!next.scopes.includes("chatgpt.tokens.use.direct") || !next.scopes.includes("resource.invoke")) throw new Error("ChatGPT plan usage permission is missing.");
     const data = this.read();
     const current = data.registrations.find((r) => r.id === record.id);
     if (!current || current.refreshToken !== record.refreshToken) throw new Error("Account changed during refresh. Retry after the current account operation finishes.");
     data.registrations = data.registrations.map((r) => r.id === record.id ? next : r);
-    this.write(data); return next;
+    // A valid renewal can reduce permissions while rotating the refresh token. Persist
+    // that rotation before refusing execution so reauthorization/revocation use the live token.
+    this.write(data);
+    if (!next.scopes.includes("chatgpt.tokens.use.direct") || !next.scopes.includes("resource.invoke")) throw new Error("ChatGPT plan usage permission is missing. Reauthorize this account.");
+    return next;
   }
 
   async signOut(id: string): Promise<string> {
