@@ -59,7 +59,10 @@ the `Release` workflow, behind the `release-signing` reviewer → GitHub release
 - **Claude sign-in (#77).** Settings launches the saved Claude CLI's browser login,
   cancels its own attempt, and verifies structured account status afterward.
   Malformed or null account status returns an unsupported result without launching login.
-  Credentials remain CLI-owned. Real interactive acceptance remains a landing gate.
+  Credentials remain CLI-owned. Apple Silicon acceptance passed on 2026-10-04 using
+  Claude Code 2.1.273: the documented terminal fallback completed browser authorization,
+  then the login handler and backend health confirmed authentication in the Mac GUI session.
+  Model access remains unverified. Evidence is recorded in PR #91; the change awaits merge.
 
 - **Provider feasibility (#78/#79).** [Gemini](gemini-feasibility.md) and
   [Grok](grok-feasibility.md) have conditional CLI/ACP integration decisions backed by
