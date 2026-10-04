@@ -58,6 +58,7 @@ the `Release` workflow, behind the `release-signing` reviewer → GitHub release
 
 - **Claude sign-in (#77).** Settings launches the saved Claude CLI's browser login,
   cancels its own attempt, and verifies structured account status afterward.
+  Malformed or null account status returns an unsupported result without launching login.
   Credentials remain CLI-owned. Real interactive acceptance remains a landing gate.
 
 - **Provider feasibility (#78/#79).** [Gemini](gemini-feasibility.md) and

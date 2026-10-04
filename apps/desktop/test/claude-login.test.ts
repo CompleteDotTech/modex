@@ -58,3 +58,15 @@ test("older CLI status never falls through to a coding prompt", async () => {
   assert.equal((await new ClaudeLogin(spawnImpl).run("claude")).status, "unsupported");
   assert.equal(f.calls.length, 0);
 });
+
+test("null account status returns unsupported without starting login", async () => {
+  let calls = 0;
+  const spawnImpl = ((_bin: string, _args: string[]) => {
+    calls++;
+    const child = new FakeProcess();
+    setImmediate(() => { child.emitLine(null); child.close(0); });
+    return child;
+  }) as unknown as typeof spawn;
+  assert.equal((await new ClaudeLogin(spawnImpl).run("claude")).status, "unsupported");
+  assert.equal(calls, 1);
+});

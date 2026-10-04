@@ -22,7 +22,7 @@ export class ClaudeLogin {
       if (cancelled) return { status: "cancelled", detail: "Sign-in cancelled. CLI credentials may already have changed; refresh status." };
       let account: { loggedIn?: unknown };
       try { account = JSON.parse(check.output); } catch { return { status: "unsupported", detail: "Account commands unavailable. Update Claude Code or sign in from its terminal." }; }
-      if (typeof account.loggedIn !== "boolean") return { status: "unsupported", detail: "Account commands unavailable. Update Claude Code or sign in from its terminal." };
+      if (!account || typeof account !== "object" || typeof account.loggedIn !== "boolean") return { status: "unsupported", detail: "Account commands unavailable. Update Claude Code or sign in from its terminal." };
       if (check.failure || check.code !== (account.loggedIn ? 0 : 1)) return { status: "failed", detail: "Claude account status was inconsistent. Check authentication in the CLI before retrying." };
       if (account.loggedIn) return { status: "authenticated", detail: "Claude is already signed in. Refresh account status to check the active billing source." };
       const exit = await new Promise<"timeout" | "failed" | "cancelled" | "completed">((resolve) => {
